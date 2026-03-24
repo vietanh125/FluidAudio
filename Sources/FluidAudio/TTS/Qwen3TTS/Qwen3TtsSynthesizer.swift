@@ -1,7 +1,7 @@
+import Accelerate
 @preconcurrency import CoreML
 import Foundation
 import OSLog
-import Accelerate
 
 /// Qwen3-TTS 6-model CoreML synthesizer.
 ///
@@ -120,9 +120,28 @@ public struct Qwen3TtsSynthesizer {
 
         // Cache tts_pad embedding for decode loop
         let textProjector = try await store.textProjector()
-        let ttsPadEmbed = try runTextProjector(textProjector, tokenId: Qwen3TtsConstants.ttsPadTokenId)
         let codeEmbedder = try await store.codeEmbedder()
         let multiCodeEmbedder = try await store.multiCodeEmbedder()
+
+        // Pre-load tts_pad in appropriate format (tensor or array)
+        let useTensorPath = {
+            if #available(macOS 15.0, iOS 18.0, *) {
+                return true
+            }
+            return false
+        }()
+
+        // Load tts_pad as tensor or array depending on path
+        var ttsPadTensorOpt: Any? = nil  // Type-erased to avoid @available issues
+        let ttsPadEmbed: MLMultiArray
+
+        if #available(macOS 15.0, iOS 18.0, *), useTensorPath {
+            let tensor = try await runTextProjectorTensor(textProjector, tokenId: Qwen3TtsConstants.ttsPadTokenId)
+            ttsPadTensorOpt = tensor
+            ttsPadEmbed = try await materializeTensorToArray(tensor)
+        } else {
+            ttsPadEmbed = try runTextProjector(textProjector, tokenId: Qwen3TtsConstants.ttsPadTokenId)
+        }
 
         // PERFORMANCE: No KV cache template needed - each frame will create fresh arrays
         // The first frame will call getModelStridedKVCaches(), subsequent frames will
@@ -150,26 +169,47 @@ public struct Qwen3TtsSynthesizer {
             allFrames.append(frame)
 
             // Build decode input: sum(all 16 codec embeddings) + tts_pad
-            let cb0Embed = try runCodeEmbedder(codeEmbedder, tokenId: currentCb0)
-            var codecSum = extractFloatArray(from: cb0Embed)
+            let decodeInput: MLMultiArray
 
-            for cbIdx in 0..<15 {
-                let linIdx = cbIdx * Qwen3TtsConstants.codecVocabSize + cb1to15[cbIdx]
-                let cbEmbed = try runMultiCodeEmbedder(multiCodeEmbedder, linearizedId: linIdx)
-                let cbFloats = extractFloatArray(from: cbEmbed)
-                for i in 0..<codecSum.count {
-                    codecSum[i] += cbFloats[i]
+            if #available(macOS 15.0, iOS 18.0, *), useTensorPath {
+                // MLTensor fast path - deferred computation, zero-copy
+                var codecSumTensor = try await runCodeEmbedderTensor(codeEmbedder, tokenId: currentCb0)
+
+                // Add cb1-cb15 using deferred tensor addition
+                for cbIdx in 0..<15 {
+                    let linIdx = cbIdx * Qwen3TtsConstants.codecVocabSize + cb1to15[cbIdx]
+                    let cbTensor = try await runMultiCodeEmbedderTensor(multiCodeEmbedder, linearizedId: linIdx)
+                    codecSumTensor = codecSumTensor + cbTensor
                 }
-            }
 
-            // Add tts_pad overlay
-            let padFloats = extractFloatArray(from: ttsPadEmbed)
-            for i in 0..<codecSum.count {
-                codecSum[i] += padFloats[i]
-            }
+                // Add tts_pad overlay
+                let ttsPadTensor = ttsPadTensorOpt as! MLTensor
+                codecSumTensor = codecSumTensor + ttsPadTensor
 
-            // Create input_embeds MLMultiArray [1, 1024, 1, 1]
-            let decodeInput = try createEmbedding(from: codecSum)
+                // Materialize tensor to MLMultiArray
+                // The tensor operations are deferred until now, making this more efficient than scalar loops
+                decodeInput = try await materializeTensorToArray(codecSumTensor)
+            } else {
+                // Legacy path with vDSP
+                let cb0Embed = try runCodeEmbedder(codeEmbedder, tokenId: currentCb0)
+                var codecSum = extractFloatArray(from: cb0Embed)
+
+                for cbIdx in 0..<15 {
+                    let linIdx = cbIdx * Qwen3TtsConstants.codecVocabSize + cb1to15[cbIdx]
+                    let cbEmbed = try runMultiCodeEmbedder(multiCodeEmbedder, linearizedId: linIdx)
+                    let cbFloats = extractFloatArray(from: cbEmbed)
+                    for i in 0..<codecSum.count {
+                        codecSum[i] += cbFloats[i]
+                    }
+                }
+
+                let padFloats = extractFloatArray(from: ttsPadEmbed)
+                for i in 0..<codecSum.count {
+                    codecSum[i] += padFloats[i]
+                }
+
+                decodeInput = try createEmbedding(from: codecSum)
+            }
 
             // CodeDecoder step
             let cdOutput = try await runCodeDecoderStep(
@@ -685,6 +725,51 @@ public struct Qwen3TtsSynthesizer {
             throw TTSError.processingFailed("Missing MultiCodeEmbedder output")
         }
         return embeds
+    }
+
+    // MARK: - MLTensor Fast Path (macOS 15+)
+
+    @available(macOS 15.0, iOS 18.0, *)
+    private static func materializeTensorToArray(_ tensor: MLTensor) async throws -> MLMultiArray {
+        // Convert MLTensor -> MLShapedArray -> MLMultiArray
+        let shapedArray = await tensor.shapedArray(of: Float.self)
+        return MLMultiArray(shapedArray)
+    }
+
+    @available(macOS 15.0, iOS 18.0, *)
+    private static func runTextProjectorTensor(_ model: MLModel, tokenId: Int) async throws -> MLTensor {
+        let inputTensor = MLTensor(shape: [1], scalars: [Int32(tokenId)])
+        let outputs = try await model.prediction(from: ["input_ids": inputTensor])
+
+        guard let embedTensor = outputs["input_embeds"] else {
+            throw TTSError.processingFailed("Missing TextProjector tensor output")
+        }
+        // Convert to float32 for consistent arithmetic
+        return embedTensor.cast(to: Float.self)
+    }
+
+    @available(macOS 15.0, iOS 18.0, *)
+    private static func runCodeEmbedderTensor(_ model: MLModel, tokenId: Int) async throws -> MLTensor {
+        let inputTensor = MLTensor(shape: [1], scalars: [Int32(tokenId)])
+        let outputs = try await model.prediction(from: ["input_ids": inputTensor])
+
+        guard let embedTensor = outputs["input_embeds"] else {
+            throw TTSError.processingFailed("Missing CodeEmbedder tensor output")
+        }
+        // Convert to float32 for consistent arithmetic
+        return embedTensor.cast(to: Float.self)
+    }
+
+    @available(macOS 15.0, iOS 18.0, *)
+    private static func runMultiCodeEmbedderTensor(_ model: MLModel, linearizedId: Int) async throws -> MLTensor {
+        let inputTensor = MLTensor(shape: [1], scalars: [Int32(linearizedId)])
+        let outputs = try await model.prediction(from: ["input_ids": inputTensor])
+
+        guard let embedTensor = outputs["input_embeds"] else {
+            throw TTSError.processingFailed("Missing MultiCodeEmbedder tensor output")
+        }
+        // Convert to float32 for consistent arithmetic
+        return embedTensor.cast(to: Float.self)
     }
 
     // MARK: - Sampling
