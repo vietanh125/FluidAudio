@@ -178,7 +178,7 @@ GitHub Actions workflows:
 
 When adding apps to the README.md showcase:
 - Add date metadata as HTML comment after the app link: `<!-- YYYY-MM-DD -->`
-- Use the commit date (when the PR is merged) for new entries
+- Use the commit date (when the PR is merged) in EST/EDT timezone for new entries
 - Do not change existing entry order or descriptions
 
 Example:
