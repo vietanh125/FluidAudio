@@ -1,5 +1,9 @@
-@preconcurrency @testable import FluidAudio
 import XCTest
+
+@preconcurrency @testable import FluidAudio
+
+// Note: Import order is not alphabetical due to Swift 6.1 (CI) vs 6.3 (local) formatter incompatibility.
+// OrderedImports rule is disabled in .swift-format until GitHub Actions supports Swift 6.3.
 
 @MainActor
 final class SortformerStreamingIntegrationTests: XCTestCase {

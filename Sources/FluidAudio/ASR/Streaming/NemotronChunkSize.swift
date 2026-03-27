@@ -2,17 +2,13 @@ import Foundation
 
 /// Chunk size variant for Nemotron streaming
 public enum NemotronChunkSize: Int, Sendable, CaseIterable {
-    case ms1120 = 1120  // 1.12s - original
-    case ms560 = 560  // 0.56s
-    case ms160 = 160  // 0.16s
-    case ms80 = 80  // 0.08s
+    case ms1120 = 1120  // 1.12s - original, best accuracy
+    case ms560 = 560  // 0.56s - lower latency, same accuracy
 
     public var repo: Repo {
         switch self {
         case .ms1120: return .nemotronStreaming1120
         case .ms560: return .nemotronStreaming560
-        case .ms160: return .nemotronStreaming160
-        case .ms80: return .nemotronStreaming80
         }
     }
 

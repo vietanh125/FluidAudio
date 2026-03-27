@@ -998,7 +998,18 @@ extension ASRBenchmark {
                 }
             }
 
-            let overallRTFx: Double = totalProcessingTime > 0 ? (totalAudioDuration / totalProcessingTime) : 0.0
+            // Validate that benchmark actually processed data
+            guard results.count > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no files processed")
+            }
+            guard totalAudioDuration > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no audio processed (totalAudioDuration=0)")
+            }
+            guard totalProcessingTime > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no processing time recorded (totalProcessingTime=0)")
+            }
+
+            let overallRTFx = totalAudioDuration / totalProcessingTime
 
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

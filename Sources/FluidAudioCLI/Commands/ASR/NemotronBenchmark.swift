@@ -16,6 +16,17 @@ public class NemotronBenchmark {
         public init() {}
     }
 
+    private struct BenchmarkResults: Codable {
+        let chunkSize: Int
+        let filesProcessed: Int
+        let totalWords: Int
+        let totalErrors: Int
+        let wer: Double
+        let audioDuration: Double
+        let processingTime: Double
+        let rtfx: Double
+    }
+
     private let config: Config
 
     public init(config: Config = Config()) {
@@ -55,10 +66,8 @@ public class NemotronBenchmark {
                     switch ms {
                     case 1120: config.chunkSize = .ms1120
                     case 560: config.chunkSize = .ms560
-                    case 160: config.chunkSize = .ms160
-                    case 80: config.chunkSize = .ms80
                     default:
-                        logger.warning("Invalid chunk size: \(ms)ms. Using default 1120ms.")
+                        logger.warning("Invalid chunk size: \(ms)ms. Valid options: 1120 or 560. Using default 1120ms.")
                     }
                 }
             case "--help", "-h":
@@ -85,19 +94,16 @@ public class NemotronBenchmark {
                 --max-files, -n <count>   Maximum files to process (default: all)
                 --subset, -s <name>       LibriSpeech subset (default: test-clean)
                 --model-dir, -m <path>    Path to Nemotron CoreML models
-                --chunk, -c <ms>          Chunk size: 1120, 560, 160, or 80 (default: 1120)
+                --chunk, -c <ms>          Chunk size: 1120 or 560 (default: 1120)
                 --help, -h                Show this help
 
             Chunk Sizes:
-                1120ms  Original chunk size (1.12s) - best accuracy
-                560ms   Half chunk size (0.56s) - lower latency
-                160ms   Small chunks (0.16s) - very low latency
-                80ms    Minimal chunks (0.08s) - ultra-low latency
+                1120ms  Original chunk size (1.12s) - best accuracy & speed (WER: 0.59%)
+                560ms   Half chunk size (0.56s) - lower latency, same accuracy (WER: 0.59%)
 
             Examples:
                 fluidaudio nemotron-benchmark --max-files 100
                 fluidaudio nemotron-benchmark --chunk 560 --max-files 50
-                fluidaudio nemotron-benchmark --chunk 160 --subset test-other
 
             Note: To transcribe custom audio files, use 'nemotron-transcribe' instead.
             """
@@ -176,9 +182,20 @@ public class NemotronBenchmark {
             }
 
             // 6. Print summary
-            let finalWer = totalWords > 0 ? Double(totalErrors) / Double(totalWords) * 100.0 : 0.0
-            let rtf = totalAudioDuration > 0 ? totalProcessingTime / totalAudioDuration : 0.0
-            let rtfx = rtf > 0 ? 1.0 / rtf : 0.0
+            // Validate that benchmark actually processed data
+            guard totalWords > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no words transcribed (totalWords=0)")
+            }
+            guard totalAudioDuration > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no audio processed (totalAudioDuration=0)")
+            }
+            guard totalProcessingTime > 0 else {
+                throw ASRError.processingFailed("Benchmark failed: no processing time recorded (totalProcessingTime=0)")
+            }
+
+            let finalWer = Double(totalErrors) / Double(totalWords) * 100.0
+            let rtf = totalProcessingTime / totalAudioDuration
+            let rtfx = 1.0 / rtf
 
             logger.info("")
             logger.info(String(repeating: "=", count: 70))
@@ -192,6 +209,29 @@ public class NemotronBenchmark {
             logger.info("Audio duration:     \(String(format: "%.1f", totalAudioDuration))s")
             logger.info("Processing time:    \(String(format: "%.1f", totalProcessingTime))s")
             logger.info("RTFx:               \(String(format: "%.1f", rtfx))x")
+
+            // Save JSON results
+            let jsonOutput = BenchmarkResults(
+                chunkSize: config.chunkSize.rawValue,
+                filesProcessed: filesToProcess.count,
+                totalWords: totalWords,
+                totalErrors: totalErrors,
+                wer: finalWer,
+                audioDuration: totalAudioDuration,
+                processingTime: totalProcessingTime,
+                rtfx: rtfx
+            )
+
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(jsonOutput)
+                let outputPath = "/tmp/nemotron_\(config.chunkSize.rawValue)ms_benchmark.json"
+                try data.write(to: URL(fileURLWithPath: outputPath))
+                print("Results saved to \(outputPath)")
+            } catch {
+                logger.error("Failed to save JSON: \(error)")
+            }
 
         } catch {
             logger.error("Benchmark failed: \(error)")

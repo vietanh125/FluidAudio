@@ -619,10 +619,21 @@ public class FLEURSBenchmark {
             }
         }
 
+        // Validate that benchmark actually processed data
+        guard processedCount > 0 else {
+            throw ASRError.processingFailed("Benchmark failed for \(language): no samples processed")
+        }
+        guard totalDuration > 0 else {
+            throw ASRError.processingFailed("Benchmark failed for \(language): no audio processed (totalDuration=0)")
+        }
+        guard totalProcessingTime > 0 else {
+            throw ASRError.processingFailed("Benchmark failed for \(language): no processing time recorded")
+        }
+
         // Calculate averages
-        let avgWER = processedCount > 0 ? totalWER / Double(processedCount) : 0.0
-        let avgCER = processedCount > 0 ? totalCER / Double(processedCount) : 0.0
-        let rtfx = totalProcessingTime > 0 ? totalDuration / totalProcessingTime : 0.0
+        let avgWER = totalWER / Double(processedCount)
+        let avgCER = totalCER / Double(processedCount)
+        let rtfx = totalDuration / totalProcessingTime
 
         return (
             LanguageResults(
