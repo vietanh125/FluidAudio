@@ -2,19 +2,21 @@
 import Foundation
 import OSLog
 
-/// A high-level streaming ASR manager that provides a simple API for real-time transcription
-/// Similar to Apple's SpeechAnalyzer, it handles audio conversion and buffering automatically
-public actor StreamingAsrManager {
-    private let logger = AppLogger(category: "StreamingASR")
+/// A high-level sliding-window ASR manager that provides a simple API for real-time transcription.
+///
+/// Uses an offline TDT encoder with overlapping windows for pseudo-streaming.
+/// Similar to Apple's SpeechAnalyzer, it handles audio conversion and buffering automatically.
+public actor SlidingWindowAsrManager {
+    private let logger = AppLogger(category: "SlidingWindowASR")
     private let audioConverter: AudioConverter = AudioConverter()
-    private let config: StreamingAsrConfig
+    private let config: SlidingWindowAsrConfig
 
     // Audio input stream
     private let inputSequence: AsyncStream<AVAudioPCMBuffer>
     private let inputBuilder: AsyncStream<AVAudioPCMBuffer>.Continuation
 
     // Transcription output stream
-    private var updateContinuation: AsyncStream<StreamingTranscriptionUpdate>.Continuation?
+    private var updateContinuation: AsyncStream<SlidingWindowTranscriptionUpdate>.Continuation?
 
     // ASR components
     private var asrManager: AsrManager?
@@ -54,9 +56,9 @@ public actor StreamingAsrManager {
     private var vocabSizeConfig: ContextBiasingConstants.VocabSizeConfig?
     private var vocabBoostingEnabled: Bool { customVocabulary != nil && vocabularyRescorer != nil }
 
-    /// Initialize the streaming ASR manager
+    /// Initialize the sliding-window ASR manager
     /// - Parameter config: Configuration for streaming behavior
-    public init(config: StreamingAsrConfig = .default) {
+    public init(config: SlidingWindowAsrConfig = .default) {
         self.config = config
 
         // Create input stream
@@ -65,7 +67,7 @@ public actor StreamingAsrManager {
         self.inputBuilder = continuation
 
         logger.info(
-            "Initialized StreamingAsrManager with config: chunk=\(config.chunkSeconds)s left=\(config.leftContextSeconds)s right=\(config.rightContextSeconds)s"
+            "Initialized SlidingWindowAsrManager with config: chunk=\(config.chunkSeconds)s left=\(config.leftContextSeconds)s right=\(config.rightContextSeconds)s"
         )
     }
 
@@ -111,24 +113,24 @@ public actor StreamingAsrManager {
         )
     }
 
-    /// Start the streaming ASR engine
+    /// Start the sliding-window ASR engine
     /// This will download models if needed and begin processing
     /// - Parameter source: The audio source to use (default: microphone)
     public func start(source: AudioSource = .microphone) async throws {
-        logger.info("Starting streaming ASR engine for source: \(String(describing: source))...")
+        logger.info("Starting sliding-window ASR engine for source: \(String(describing: source))...")
 
         // Initialize ASR models
         let models = try await AsrModels.downloadAndLoad()
         try await start(models: models, source: source)
     }
 
-    /// Start the streaming ASR engine with pre-loaded models
+    /// Start the sliding-window ASR engine with pre-loaded models
     /// - Parameters:
     ///   - models: Pre-loaded ASR models to use
     ///   - source: The audio source to use (default: microphone)
     public func start(models: AsrModels, source: AudioSource = .microphone) async throws {
         logger.info(
-            "Starting streaming ASR engine with pre-loaded models for source: \(String(describing: source))..."
+            "Starting sliding-window ASR engine with pre-loaded models for source: \(String(describing: source))..."
         )
 
         self.audioSource = source
@@ -159,7 +161,7 @@ public actor StreamingAsrManager {
                     // Append to raw sample buffer and attempt windowed processing
                     await self.appendSamplesAndProcess(samples)
                 } catch {
-                    let streamingError = StreamingAsrError.audioBufferProcessingFailed(error)
+                    let streamingError = SlidingWindowAsrError.audioBufferProcessingFailed(error)
                     logger.error(
                         "Audio buffer processing error: \(streamingError.localizedDescription)")
                     await attemptErrorRecovery(error: streamingError)
@@ -174,7 +176,7 @@ public actor StreamingAsrManager {
             logger.info("Recognition task completed")
         }
 
-        logger.info("Streaming ASR engine started successfully")
+        logger.info("Sliding-window ASR engine started successfully")
     }
 
     /// Stream audio data for transcription
@@ -184,7 +186,7 @@ public actor StreamingAsrManager {
     }
 
     /// Get an async stream of transcription updates
-    public var transcriptionUpdates: AsyncStream<StreamingTranscriptionUpdate> {
+    public var transcriptionUpdates: AsyncStream<SlidingWindowTranscriptionUpdate> {
         AsyncStream { continuation in
             self.updateContinuation = continuation
 
@@ -199,7 +201,7 @@ public actor StreamingAsrManager {
     /// Finish streaming and get the final transcription
     /// - Returns: The complete transcription text
     public func finish() async throws -> String {
-        logger.info("Finishing streaming ASR...")
+        logger.info("Finishing sliding-window ASR...")
 
         // Signal end of input
         inputBuilder.finish()
@@ -261,7 +263,7 @@ public actor StreamingAsrManager {
         lastProcessedFrame = 0
         accumulatedTokens.removeAll()
 
-        logger.info("StreamingAsrManager reset for source: \(String(describing: self.audioSource))")
+        logger.info("SlidingWindowAsrManager reset for source: \(String(describing: self.audioSource))")
     }
 
     /// Cancel streaming without getting results
@@ -270,7 +272,7 @@ public actor StreamingAsrManager {
         recognizerTask?.cancel()
         updateContinuation?.finish()
 
-        logger.info("StreamingAsrManager cancelled")
+        logger.info("SlidingWindowAsrManager cancelled")
     }
 
     /// Clear the update continuation
@@ -446,7 +448,7 @@ public actor StreamingAsrManager {
 
             await updateTranscriptionState(with: displayResult, shouldConfirm: shouldConfirm)
 
-            let update = StreamingTranscriptionUpdate(
+            let update = SlidingWindowTranscriptionUpdate(
                 text: displayResult.text,
                 isConfirmed: shouldConfirm,
                 confidence: interim.confidence,
@@ -458,7 +460,7 @@ public actor StreamingAsrManager {
             updateContinuation?.yield(update)
 
         } catch {
-            let streamingError = StreamingAsrError.modelProcessingFailed(error)
+            let streamingError = SlidingWindowAsrError.modelProcessingFailed(error)
             logger.error("Model processing error: \(streamingError.localizedDescription)")
 
             // Attempt error recovery
@@ -583,7 +585,7 @@ public actor StreamingAsrManager {
         logger.warning("Attempting error recovery for: \(error)")
 
         // Handle specific error types with targeted recovery
-        if let streamingError = error as? StreamingAsrError {
+        if let streamingError = error as? SlidingWindowAsrError {
             switch streamingError {
             case .modelsNotLoaded:
                 logger.error("Models not loaded - cannot recover automatically")
@@ -637,8 +639,8 @@ public actor StreamingAsrManager {
     }
 }
 
-/// Configuration for StreamingAsrManager
-public struct StreamingAsrConfig: Sendable {
+/// Configuration for the sliding-window ASR manager
+public struct SlidingWindowAsrConfig: Sendable {
     /// Main chunk size for stable transcription (seconds). Should be 10-11s for best quality
     public let chunkSeconds: TimeInterval
     /// Quick hypothesis chunk size for immediate feedback (seconds). Typical: 1.0s
@@ -653,7 +655,7 @@ public struct StreamingAsrConfig: Sendable {
     /// Confidence threshold for promoting volatile text to confirmed (0.0...1.0)
     public let confirmationThreshold: Double
     /// Default configuration aligned with previous API expectations
-    public static let `default` = StreamingAsrConfig(
+    public static let `default` = SlidingWindowAsrConfig(
         chunkSeconds: 15.0,
         hypothesisChunkSeconds: 2.0,
         leftContextSeconds: 10.0,
@@ -665,7 +667,7 @@ public struct StreamingAsrConfig: Sendable {
     /// Optimized streaming configuration: Dual-track processing for best experience
     /// Uses ChunkProcessor's proven 11-2-2 approach for stable transcription
     /// Plus quick hypothesis updates for immediate feedback
-    public static let streaming = StreamingAsrConfig(
+    public static let streaming = SlidingWindowAsrConfig(
         chunkSeconds: 11.0,  // Match ChunkProcessor for stable transcription
         hypothesisChunkSeconds: 1.0,  // Quick hypothesis updates
         leftContextSeconds: 2.0,  // Match ChunkProcessor left context
@@ -709,8 +711,8 @@ public struct StreamingAsrConfig: Sendable {
     public static func custom(
         chunkDuration: TimeInterval,
         confirmationThreshold: Double
-    ) -> StreamingAsrConfig {
-        StreamingAsrConfig(
+    ) -> SlidingWindowAsrConfig {
+        SlidingWindowAsrConfig(
             chunkSeconds: chunkDuration,
             hypothesisChunkSeconds: min(1.0, chunkDuration / 2.0),  // Default to half chunk duration
             leftContextSeconds: 10.0,
@@ -741,8 +743,8 @@ public struct StreamingAsrConfig: Sendable {
     var chunkSizeInSamples: Int { chunkSamples }
 }
 
-/// Transcription update from streaming ASR
-public struct StreamingTranscriptionUpdate: Sendable {
+/// Transcription update from sliding-window ASR
+public struct SlidingWindowTranscriptionUpdate: Sendable {
     /// The transcribed text
     public let text: String
 

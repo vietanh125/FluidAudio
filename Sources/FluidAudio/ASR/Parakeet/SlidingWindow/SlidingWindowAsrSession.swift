@@ -1,16 +1,16 @@
 import Foundation
 import OSLog
 
-/// A session manager for handling multiple streaming ASR instances with shared model loading
-/// This ensures models are loaded only once and shared across all streams
-public actor StreamingAsrSession {
-    private let logger = AppLogger(category: "StreamingSession")
+/// A session manager for handling multiple sliding-window ASR instances with shared model loading.
+/// This ensures models are loaded only once and shared across all streams.
+public actor SlidingWindowAsrSession {
+    private let logger = AppLogger(category: "SlidingWindowSession")
     private var loadedModels: AsrModels?
-    private var streams: [AudioSource: StreamingAsrManager] = [:]
+    private var streams: [AudioSource: SlidingWindowAsrManager] = [:]
 
     /// Initialize a new streaming session
     public init() {
-        logger.info("Created new StreamingAsrSession")
+        logger.info("Created new SlidingWindowAsrSession")
     }
 
     /// Load ASR models for the session (called automatically if needed)
@@ -30,11 +30,11 @@ public actor StreamingAsrSession {
     /// - Parameters:
     ///   - source: The audio source (microphone or system)
     ///   - config: Configuration for the streaming behavior
-    /// - Returns: A configured StreamingAsrManager instance
+    /// - Returns: A configured SlidingWindowAsrManager instance
     public func createStream(
         source: AudioSource,
-        config: StreamingAsrConfig = .default
-    ) async throws -> StreamingAsrManager {
+        config: SlidingWindowAsrConfig = .default
+    ) async throws -> SlidingWindowAsrManager {
         // Check if we already have a stream for this source
         if let existingStream = streams[source] {
             logger.warning(
@@ -48,13 +48,13 @@ public actor StreamingAsrSession {
         }
 
         guard let models = loadedModels else {
-            throw StreamingAsrError.modelsNotLoaded
+            throw SlidingWindowAsrError.modelsNotLoaded
         }
 
         logger.info("Creating new stream for source: \(String(describing: source))")
 
         // Create new stream with pre-loaded models
-        let stream = StreamingAsrManager(config: config)
+        let stream = SlidingWindowAsrManager(config: config)
         try await stream.start(models: models, source: source)
 
         // Store reference
@@ -66,7 +66,7 @@ public actor StreamingAsrSession {
     /// Get an existing stream for a source
     /// - Parameter source: The audio source
     /// - Returns: The stream if it exists, nil otherwise
-    public func getStream(for source: AudioSource) -> StreamingAsrManager? {
+    public func getStream(for source: AudioSource) -> SlidingWindowAsrManager? {
         return streams[source]
     }
 
@@ -79,30 +79,83 @@ public actor StreamingAsrSession {
     }
 
     /// Get all active streams
-    public var activeStreams: [AudioSource: StreamingAsrManager] {
+    public var activeStreams: [AudioSource: SlidingWindowAsrManager] {
         return streams
+    }
+
+    // MARK: - Generic Engine Support
+
+    /// Engines created via the factory (stored separately from TDT-specific streams)
+    private var engines: [AudioSource: any StreamingAsrEngine] = [:]
+
+    /// Create a true streaming ASR engine using the factory.
+    ///
+    /// Unlike `createStream(source:config:)` which uses TDT (sliding-window), this method
+    /// creates engines with native streaming architectures (EOU, Nemotron) via `StreamingModelVariant`.
+    ///
+    /// - Parameters:
+    ///   - variant: The streaming model variant to use.
+    ///   - source: The audio source label for tracking (default: `.microphone`).
+    /// - Returns: A loaded and ready-to-use streaming ASR engine.
+    public func createEngine(
+        variant: StreamingModelVariant,
+        source: AudioSource = .microphone
+    ) async throws -> any StreamingAsrEngine {
+        if let existing = engines[source] {
+            logger.warning(
+                "Engine already exists for source: \(String(describing: source)). Returning existing engine.")
+            return existing
+        }
+
+        logger.info(
+            "Creating \(variant.displayName) engine for source: \(String(describing: source))")
+
+        let engine = StreamingAsrEngineFactory.create(variant)
+        try await engine.loadModels()
+        engines[source] = engine
+
+        return engine
+    }
+
+    /// Get an existing engine for a source
+    public func getEngine(for source: AudioSource) -> (any StreamingAsrEngine)? {
+        return engines[source]
+    }
+
+    /// Remove an engine for a source
+    public func removeEngine(for source: AudioSource) {
+        if engines.removeValue(forKey: source) != nil {
+            logger.info("Removed engine for source: \(String(describing: source))")
+        }
     }
 
     /// Clean up all streams and release resources
     public func cleanup() async {
-        logger.info("Cleaning up StreamingAsrSession...")
+        logger.info("Cleaning up SlidingWindowAsrSession...")
 
-        // Cancel all streams
+        // Cancel TDT streams
         for (source, stream) in streams {
             await stream.cancel()
             logger.info("Cancelled stream for source: \(String(describing: source))")
         }
 
+        // Reset generic engines
+        for (source, engine) in engines {
+            try? await engine.reset()
+            logger.info("Reset engine for source: \(String(describing: source))")
+        }
+
         // Clear references
         streams.removeAll()
+        engines.removeAll()
         loadedModels = nil
 
-        logger.info("StreamingAsrSession cleanup complete")
+        logger.info("SlidingWindowAsrSession cleanup complete")
     }
 }
 
-/// Errors specific to streaming ASR session
-public enum StreamingAsrError: LocalizedError {
+/// Errors specific to sliding-window ASR session
+public enum SlidingWindowAsrError: LocalizedError {
     case modelsNotLoaded
     case streamAlreadyExists(AudioSource)
     case audioBufferProcessingFailed(Error)

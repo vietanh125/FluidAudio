@@ -554,6 +554,39 @@ public actor StreamingEouAsrManager {
     }
 }
 
+// MARK: - StreamingAsrEngine Conformance
+
+extension StreamingEouAsrManager: StreamingAsrEngine {
+    public var displayName: String {
+        "Parakeet EOU 120M (\(chunkSize.durationMs)ms)"
+    }
+
+    public func loadModels() async throws {
+        try await loadModelsFromHuggingFace()
+    }
+
+    public func processBufferedAudio() async throws {
+        while audioBuffer.count >= chunkSamples {
+            let chunk = Array(audioBuffer.prefix(chunkSamples))
+            let samplesToShift = shiftSamples
+            try await processChunkAndDecode(chunk)
+            let actualShift = min(samplesToShift, audioBuffer.count)
+            if actualShift > 0 {
+                audioBuffer.removeFirst(actualShift)
+            }
+        }
+    }
+
+    public func setPartialTranscriptCallback(_ callback: @escaping @Sendable (String) -> Void) {
+        self.partialCallback = callback
+    }
+
+    public func getPartialTranscript() -> String {
+        guard let tokenizer = tokenizer else { return "" }
+        return tokenizer.decode(ids: accumulatedTokenIds)
+    }
+}
+
 extension MLMultiArray {
     func reset(to value: NSNumber) {
         let count = self.count

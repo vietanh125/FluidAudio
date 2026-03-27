@@ -45,6 +45,15 @@ public actor NemotronStreamingAsrManager {
     // Callbacks
     internal var partialCallback: NemotronPartialCallback?
 
+    /// Chunk size for auto-download. Set by `StreamingAsrEngineFactory`
+    /// to determine which HuggingFace repo to download from in `loadModels()`.
+    internal var requestedChunkSize: NemotronChunkSize?
+
+    /// Set the requested chunk size (used by factory before loadModels)
+    internal func setRequestedChunkSize(_ chunkSize: NemotronChunkSize) {
+        self.requestedChunkSize = chunkSize
+    }
+
     // Stats
     internal var processedChunks: Int = 0
 
@@ -211,5 +220,50 @@ public actor NemotronStreamingAsrManager {
     public func getPartialTranscript() -> String {
         guard let tokenizer = tokenizer else { return "" }
         return tokenizer.decode(ids: accumulatedTokenIds)
+    }
+}
+
+// MARK: - StreamingAsrEngine Conformance
+
+extension NemotronStreamingAsrManager: StreamingAsrEngine {
+    public var displayName: String {
+        "Nemotron 0.6B (\(config.chunkMs)ms)"
+    }
+
+    public func loadModels() async throws {
+        let chunkSize = requestedChunkSize ?? .ms1120
+        let repo = chunkSize.repo
+
+        let modelsBaseDir = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first!
+        .appendingPathComponent("FluidAudio", isDirectory: true)
+        .appendingPathComponent("Models", isDirectory: true)
+
+        let cacheDir = modelsBaseDir.appendingPathComponent(repo.folderName)
+        let encoderInt8Path = cacheDir.appendingPathComponent("encoder/\(NemotronEncoder.fileName)")
+
+        if !FileManager.default.fileExists(atPath: encoderInt8Path.path) {
+            try await DownloadUtils.downloadRepo(repo, to: modelsBaseDir)
+        }
+
+        try await loadModels(modelDir: cacheDir)
+    }
+
+    public func processBufferedAudio() async throws {
+        guard preprocessor != nil, encoder != nil, decoder != nil, joint != nil else {
+            throw ASRError.notInitialized
+        }
+
+        while audioBuffer.count >= config.chunkSamples {
+            let chunk = Array(audioBuffer.prefix(config.chunkSamples))
+            try await processChunk(chunk)
+            let samplesToRemove = min(config.chunkSamples, audioBuffer.count)
+            audioBuffer.removeFirst(samplesToRemove)
+        }
+    }
+
+    public func setPartialTranscriptCallback(_ callback: @escaping @Sendable (String) -> Void) {
+        self.partialCallback = callback
     }
 }

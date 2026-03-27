@@ -3,7 +3,7 @@ import XCTest
 
 @testable import FluidAudio
 
-final class StreamingAsrSessionTests: XCTestCase {
+final class SlidingWindowAsrSessionTests: XCTestCase {
     override func setUp() {
         super.setUp()
     }
@@ -15,7 +15,7 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Initialization Tests
 
     func testSessionInitialization() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
         let activeStreams = await session.activeStreams
         XCTAssertTrue(activeStreams.isEmpty)
     }
@@ -23,25 +23,25 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Stream Management Tests
 
     func testGetStreamForNonExistentSource() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
         let stream = await session.getStream(for: .microphone)
         XCTAssertNil(stream)
     }
 
     func testRemoveNonExistentStream() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
         // Should not throw when removing non-existent stream
         await session.removeStream(for: .microphone)
     }
 
     func testActiveStreamsEmpty() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
         let streams = await session.activeStreams
         XCTAssertTrue(streams.isEmpty)
     }
 
     func testCleanupEmptySession() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
         // Should not throw when cleaning up empty session
         await session.cleanup()
 
@@ -51,20 +51,20 @@ final class StreamingAsrSessionTests: XCTestCase {
 
     // MARK: - Error Tests
 
-    func testStreamingAsrErrorDescriptions() {
-        let modelsNotLoadedError = StreamingAsrError.modelsNotLoaded
+    func testSlidingWindowAsrErrorDescriptions() {
+        let modelsNotLoadedError = SlidingWindowAsrError.modelsNotLoaded
         XCTAssertEqual(
             modelsNotLoadedError.errorDescription,
             "ASR models have not been loaded"
         )
 
-        let streamExistsError = StreamingAsrError.streamAlreadyExists(.microphone)
+        let streamExistsError = SlidingWindowAsrError.streamAlreadyExists(.microphone)
         XCTAssertEqual(
             streamExistsError.errorDescription,
             "A stream already exists for source: microphone"
         )
 
-        let systemStreamExistsError = StreamingAsrError.streamAlreadyExists(.system)
+        let systemStreamExistsError = SlidingWindowAsrError.streamAlreadyExists(.system)
         XCTAssertEqual(
             systemStreamExistsError.errorDescription,
             "A stream already exists for source: system"
@@ -74,11 +74,11 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Configuration Tests
 
     func testSessionWithDifferentConfigurations() async throws {
-        _ = StreamingAsrSession()
+        _ = SlidingWindowAsrSession()
 
         // Test that session can be created with different configs
         let configs = [
-            StreamingAsrConfig.default
+            SlidingWindowAsrConfig.default
         ]
 
         // Verify all configs are valid
@@ -106,7 +106,7 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Thread Safety Tests
 
     func testConcurrentStreamOperations() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
 
         // Test concurrent reads
         await withTaskGroup(of: Void.self) { group in
@@ -126,7 +126,7 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Memory Management Tests
 
     func testSessionMemoryCleanup() async throws {
-        var session: StreamingAsrSession? = StreamingAsrSession()
+        var session: SlidingWindowAsrSession? = SlidingWindowAsrSession()
 
         // Cleanup and release
         await session?.cleanup()
@@ -142,7 +142,7 @@ final class StreamingAsrSessionTests: XCTestCase {
     // MARK: - Integration Preparation Tests
 
     func testSessionReadyForIntegration() async throws {
-        let session = StreamingAsrSession()
+        let session = SlidingWindowAsrSession()
 
         // Verify session provides expected interface
         XCTAssertNotNil(session)

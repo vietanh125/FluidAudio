@@ -3,7 +3,7 @@ import XCTest
 
 @testable import FluidAudio
 
-final class StreamingAsrManagerTests: XCTestCase {
+final class SlidingWindowAsrManagerTests: XCTestCase {
     override func setUp() {
         super.setUp()
     }
@@ -15,7 +15,7 @@ final class StreamingAsrManagerTests: XCTestCase {
     // MARK: - Initialization Tests
 
     func testInitializationWithDefaultConfig() async throws {
-        let manager = StreamingAsrManager()
+        let manager = SlidingWindowAsrManager()
         let volatileTranscript = await manager.volatileTranscript
         let confirmedTranscript = await manager.confirmedTranscript
         let source = await manager.source
@@ -26,11 +26,11 @@ final class StreamingAsrManagerTests: XCTestCase {
     }
 
     func testInitializationWithCustomConfig() async throws {
-        let config = StreamingAsrConfig(
+        let config = SlidingWindowAsrConfig(
             confirmationThreshold: 0.9,
             chunkDuration: 10.0,
         )
-        let manager = StreamingAsrManager(config: config)
+        let manager = SlidingWindowAsrManager(config: config)
         let volatileTranscript = await manager.volatileTranscript
         let confirmedTranscript = await manager.confirmedTranscript
 
@@ -42,13 +42,13 @@ final class StreamingAsrManagerTests: XCTestCase {
 
     func testConfigPresets() {
         // Test default config
-        let defaultConfig = StreamingAsrConfig.default
+        let defaultConfig = SlidingWindowAsrConfig.default
         XCTAssertEqual(defaultConfig.confirmationThreshold, 0.85)
         XCTAssertEqual(defaultConfig.chunkDuration, 15.0)
     }
 
     func testConfigCalculatedProperties() {
-        let config = StreamingAsrConfig(chunkDuration: 5.0)
+        let config = SlidingWindowAsrConfig(chunkDuration: 5.0)
         XCTAssertEqual(config.bufferCapacity, 240000)  // 15 seconds at 16kHz
         XCTAssertEqual(config.chunkSizeInSamples, 80000)  // 5 seconds at 16kHz
 
@@ -120,8 +120,8 @@ final class StreamingAsrManagerTests: XCTestCase {
 
     // MARK: - Update Structure Tests
 
-    func testStreamingTranscriptionUpdateCreation() {
-        let update = StreamingTranscriptionUpdate(
+    func testSlidingWindowTranscriptionUpdateCreation() {
+        let update = SlidingWindowTranscriptionUpdate(
             text: "Hello world",
             isConfirmed: true,
             confidence: 0.95,
@@ -141,30 +141,30 @@ final class StreamingAsrManagerTests: XCTestCase {
         let baseTimestamps = [0, 5, 10]
         let offsetSamples = 3 * ASRConstants.samplesPerEncoderFrame  // 3 frames of left context
 
-        let adjusted = StreamingAsrManager.applyGlobalFrameOffset(
+        let adjusted = SlidingWindowAsrManager.applyGlobalFrameOffset(
             to: baseTimestamps,
             windowStartSample: offsetSamples
         )
 
         XCTAssertEqual(adjusted, [3, 8, 13], "Timestamps should be shifted by frame offset")
 
-        let zeroOffset = StreamingAsrManager.applyGlobalFrameOffset(
+        let zeroOffset = SlidingWindowAsrManager.applyGlobalFrameOffset(
             to: baseTimestamps,
             windowStartSample: 0
         )
         XCTAssertEqual(zeroOffset, baseTimestamps, "Zero offset should preserve timestamps")
 
-        let emptyAdjusted = StreamingAsrManager.applyGlobalFrameOffset(to: [], windowStartSample: offsetSamples)
+        let emptyAdjusted = SlidingWindowAsrManager.applyGlobalFrameOffset(to: [], windowStartSample: offsetSamples)
         XCTAssertTrue(emptyAdjusted.isEmpty, "Empty input should remain empty")
     }
 
-    func testStreamingTranscriptionUpdateTokenMetadata() {
+    func testSlidingWindowTranscriptionUpdateTokenMetadata() {
         let tokenTimings = [
             TokenTiming(token: "hello", tokenId: 1, startTime: 0.0, endTime: 0.32, confidence: 0.98),
             TokenTiming(token: "world", tokenId: 2, startTime: 0.32, endTime: 0.64, confidence: 0.97),
         ]
 
-        let update = StreamingTranscriptionUpdate(
+        let update = SlidingWindowTranscriptionUpdate(
             text: "Hello world",
             isConfirmed: true,
             confidence: 0.95,
@@ -178,9 +178,9 @@ final class StreamingAsrManagerTests: XCTestCase {
         XCTAssertEqual(update.tokens, ["hello", "world"])
     }
 
-    func testStreamingTranscriptionUpdateConfidence() {
+    func testSlidingWindowTranscriptionUpdateConfidence() {
         // Test low confidence update
-        let lowConfUpdate = StreamingTranscriptionUpdate(
+        let lowConfUpdate = SlidingWindowTranscriptionUpdate(
             text: "uncertain text",
             isConfirmed: false,
             confidence: 0.5,
@@ -190,7 +190,7 @@ final class StreamingAsrManagerTests: XCTestCase {
         XCTAssertLessThan(lowConfUpdate.confidence, 0.75)
 
         // Test high confidence update
-        let highConfUpdate = StreamingTranscriptionUpdate(
+        let highConfUpdate = SlidingWindowTranscriptionUpdate(
             text: "certain text",
             isConfirmed: true,
             confidence: 0.95,
@@ -209,7 +209,7 @@ final class StreamingAsrManagerTests: XCTestCase {
     // MARK: - Custom Configuration Tests
 
     func testCustomConfigurationFactory() {
-        let customConfig = StreamingAsrConfig.custom(
+        let customConfig = SlidingWindowAsrConfig.custom(
             chunkDuration: 7.5,
             confirmationThreshold: 0.8,
         )
@@ -223,7 +223,7 @@ final class StreamingAsrManagerTests: XCTestCase {
     func testChunkSizeCalculationPerformance() {
         measure {
             for duration in stride(from: 1.0, to: 20.0, by: 0.5) {
-                let config = StreamingAsrConfig(chunkDuration: duration)
+                let config = SlidingWindowAsrConfig(chunkDuration: duration)
                 _ = config.chunkSizeInSamples
                 _ = config.bufferCapacity
             }

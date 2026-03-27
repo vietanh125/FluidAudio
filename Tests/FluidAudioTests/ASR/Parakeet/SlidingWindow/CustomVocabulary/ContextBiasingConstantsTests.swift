@@ -88,7 +88,7 @@ final class ContextBiasingConstantsTests: XCTestCase {
         // the effective threshold should be the max of the size-based config
         // and the caller-specified value. This matches the logic in
         // AsrTranscription.applyVocabularyRescoring() and
-        // StreamingAsrManager.applyVocabularyRescoring().
+        // SlidingWindowAsrManager.applyVocabularyRescoring().
         let smallVocabConfig = ContextBiasingConstants.rescorerConfig(forVocabSize: 5)
         XCTAssertEqual(smallVocabConfig.minSimilarity, 0.50, accuracy: 0.01)
 

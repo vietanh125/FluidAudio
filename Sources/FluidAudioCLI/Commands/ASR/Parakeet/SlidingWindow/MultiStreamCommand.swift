@@ -97,7 +97,7 @@ enum MultiStreamCommand {
 
             // Create a streaming session
             logger.info("Creating streaming session...")
-            let session = StreamingAsrSession()
+            let session = SlidingWindowAsrSession()
 
             // Initialize models once
             logger.info("Loading ASR models (shared across streams)...")
@@ -191,7 +191,7 @@ enum MultiStreamCommand {
     private static func streamAudioFile(
         buffer: AVAudioPCMBuffer,
         format: AVAudioFormat,
-        to stream: StreamingAsrManager,
+        to stream: SlidingWindowAsrManager,
         label: String
     ) async {
         let chunkDuration = 0.5  // 500ms chunks

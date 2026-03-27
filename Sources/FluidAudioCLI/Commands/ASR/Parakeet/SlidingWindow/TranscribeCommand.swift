@@ -9,8 +9,8 @@ actor TranscriptionTracker {
     private var confirmedUpdates: [String] = []
     private var currentAudioPosition: Double = 0.0
     private let startTime: Date
-    private var latestUpdate: StreamingTranscriptionUpdate?
-    private var latestConfirmedUpdate: StreamingTranscriptionUpdate?
+    private var latestUpdate: SlidingWindowTranscriptionUpdate?
+    private var latestConfirmedUpdate: SlidingWindowTranscriptionUpdate?
     private var tokenTimingMap: [TokenKey: TokenTiming] = [:]
 
     init() {
@@ -45,7 +45,7 @@ actor TranscriptionTracker {
         return confirmedUpdates.count
     }
 
-    func record(update: StreamingTranscriptionUpdate) {
+    func record(update: SlidingWindowTranscriptionUpdate) {
         latestUpdate = update
 
         if update.isConfirmed {
@@ -85,7 +85,7 @@ actor TranscriptionTracker {
         return nil
     }
 
-    func latestUpdateSnapshot() -> StreamingTranscriptionUpdate? {
+    func latestUpdateSnapshot() -> SlidingWindowTranscriptionUpdate? {
         latestConfirmedUpdate ?? latestUpdate
     }
 
@@ -213,6 +213,7 @@ enum TranscribeCommand {
         var modelVersion: AsrModelVersion = .v3  // Default to v3
         var customVocabPath: String?
         var modelDir: String?
+        var parakeetVariant: StreamingModelVariant?
 
         // Parse options
         var i = 1
@@ -258,13 +259,31 @@ enum TranscribeCommand {
                     customVocabPath = arguments[i + 1]
                     i += 1
                 }
+            case "--parakeet-variant":
+                if i + 1 < arguments.count {
+                    guard let variant = StreamingModelVariant(rawValue: arguments[i + 1]) else {
+                        let validVariants = StreamingModelVariant.allCases.map(\.rawValue).joined(
+                            separator: ", ")
+                        logger.error(
+                            "Unknown variant: \(arguments[i + 1]). Valid: \(validVariants)")
+                        exit(1)
+                    }
+                    parakeetVariant = variant
+                    i += 1
+                }
             default:
                 logger.warning("Warning: Unknown option: \(arguments[i])")
             }
             i += 1
         }
 
-        if streamingMode {
+        if let variant = parakeetVariant {
+            logger.info(
+                "Using \(variant.displayName) via StreamingAsrEngine protocol.\n"
+            )
+            await runWithEngine(
+                audioFile: audioFile, variant: variant)
+        } else if streamingMode {
             logger.info(
                 "Streaming mode enabled: simulating real-time audio with 1-second chunks.\n"
             )
@@ -500,10 +519,10 @@ enum TranscribeCommand {
         modelVersion: AsrModelVersion, customVocabPath: String?
     ) async {
         // Use optimized streaming configuration
-        let config = StreamingAsrConfig.streaming
+        let config = SlidingWindowAsrConfig.streaming
 
-        // Create StreamingAsrManager
-        let streamingAsr = StreamingAsrManager(config: config)
+        // Create SlidingWindowAsrManager
+        let streamingAsr = SlidingWindowAsrManager(config: config)
 
         do {
             // Initialize ASR models
@@ -541,7 +560,7 @@ enum TranscribeCommand {
 
             try audioFileHandle.read(into: buffer)
 
-            // Calculate streaming parameters - align with StreamingAsrConfig chunk size
+            // Calculate streaming parameters - align with SlidingWindowAsrConfig chunk size
             let chunkDuration = config.chunkSeconds  // Use same chunk size as streaming config
             let samplesPerChunk = Int(chunkDuration * format.sampleRate)
             let totalDuration = Double(audioFileHandle.length) / format.sampleRate
@@ -726,7 +745,7 @@ enum TranscribeCommand {
         }
     }
 
-    private static func streamingTimingSummary(for update: StreamingTranscriptionUpdate) -> String {
+    private static func streamingTimingSummary(for update: SlidingWindowTranscriptionUpdate) -> String {
         streamingTimingSummary(timings: update.tokenTimings)
     }
 
@@ -750,6 +769,83 @@ enum TranscribeCommand {
             "Token timings: count=\(tokenCount), start=\(startText)s, end=\(endText)s, preview='\(previewText)\(ellipsis)'"
     }
 
+    /// Run transcription using the universal StreamingAsrEngine protocol
+    private static func runWithEngine(
+        audioFile: String, variant: StreamingModelVariant
+    ) async {
+        do {
+            let engine = StreamingAsrEngineFactory.create(variant)
+
+            logger.info("Loading \(variant.displayName) models...")
+            let loadStart = Date()
+            try await engine.loadModels()
+            let loadTime = Date().timeIntervalSince(loadStart)
+            logger.info("Models loaded in \(String(format: "%.2f", loadTime))s")
+
+            // Load audio file
+            let audioFileURL = URL(fileURLWithPath: audioFile)
+            let audioFileHandle = try AVAudioFile(forReading: audioFileURL)
+            let format = audioFileHandle.processingFormat
+            let frameCount = AVAudioFrameCount(audioFileHandle.length)
+            let totalDuration = Double(audioFileHandle.length) / format.sampleRate
+
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
+            else {
+                logger.error("Failed to create audio buffer")
+                return
+            }
+            try audioFileHandle.read(into: buffer)
+
+            // Set up partial transcript callback
+            await engine.setPartialTranscriptCallback { partial in
+                if !partial.isEmpty {
+                    logger.info("[PARTIAL] \(partial)")
+                }
+            }
+
+            // Feed audio in 1-second chunks
+            let samplesPerChunk = Int(format.sampleRate)  // 1 second
+            let totalSamples = Int(buffer.frameLength)
+            let processStart = Date()
+
+            var offset = 0
+            while offset < totalSamples {
+                let remaining = totalSamples - offset
+                let chunkSize = min(samplesPerChunk, remaining)
+                let chunkFrameCount = AVAudioFrameCount(chunkSize)
+
+                guard
+                    let chunkBuffer = AVAudioPCMBuffer(
+                        pcmFormat: format, frameCapacity: chunkFrameCount)
+                else { break }
+
+                chunkBuffer.frameLength = chunkFrameCount
+                if let src = buffer.floatChannelData, let dst = chunkBuffer.floatChannelData {
+                    for ch in 0..<Int(format.channelCount) {
+                        dst[ch].update(from: src[ch].advanced(by: offset), count: chunkSize)
+                    }
+                }
+
+                try await engine.appendAudio(chunkBuffer)
+                try await engine.processBufferedAudio()
+                offset += chunkSize
+            }
+
+            let transcript = try await engine.finish()
+            let processingTime = Date().timeIntervalSince(processStart)
+            let rtfx = totalDuration / processingTime
+
+            logger.info("\n--- Transcription Result ---")
+            logger.info("Model: \(variant.displayName)")
+            logger.info("Audio: \(String(format: "%.2f", totalDuration))s")
+            logger.info("Time:  \(String(format: "%.2f", processingTime))s")
+            logger.info("RTFx:  \(String(format: "%.2f", rtfx))x")
+            logger.info("Text:  \(transcript)")
+        } catch {
+            logger.error("Engine transcription failed: \(error.localizedDescription)")
+        }
+    }
+
     private static func printUsage() {
         let logger = AppLogger(category: "Transcribe")
         logger.info(
@@ -767,6 +863,12 @@ enum TranscribeCommand {
                 --model-version <version>  ASR model version: v2, v3, or tdt-ctc-110m (default: v3)
                 --model-dir <path>     Path to local model directory (skips download)
                 --custom-vocab <file>  Apply vocabulary boosting using terms from file (batch mode only)
+                --parakeet-variant <variant>  Use any Parakeet model via StreamingAsrEngine protocol
+
+            Streaming variants (for --parakeet-variant):
+                parakeet-eou-160ms, parakeet-eou-320ms, parakeet-eou-1280ms,
+                nemotron-80ms, nemotron-160ms, nemotron-560ms, nemotron-1120ms
+                (TDT models use --streaming + --model-version instead)
 
             Examples:
                 fluidaudio transcribe audio.wav                    # Batch mode (default)
@@ -776,6 +878,7 @@ enum TranscribeCommand {
                 fluidaudio transcribe audio.wav --streaming --metadata # Streaming mode with metadata
                 fluidaudio transcribe audio.wav --output-json results.json
                 fluidaudio transcribe audio.wav --custom-vocab vocab.txt  # With vocabulary boosting
+                fluidaudio transcribe audio.wav --parakeet-variant parakeet-eou-320ms  # Any engine via protocol
 
             Batch mode (default):
             - Direct processing using AsrManager for fastest results
@@ -784,7 +887,7 @@ enum TranscribeCommand {
             Streaming mode:
             - Simulates real-time streaming with chunk processing
             - Shows incremental transcription updates
-            - Uses StreamingAsrManager with sliding window processing
+            - Uses SlidingWindowAsrManager with sliding window processing
 
             Metadata option:
             - Shows confidence score for transcription accuracy

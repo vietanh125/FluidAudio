@@ -144,8 +144,10 @@ FluidAudio/
 ## Architecture Overview
 
 ### Core Components
-- **AsrManager** (`ASR/`): Speech-to-text via TDT (Token Duration Transducer) decoding. Stateless per-chunk processing with automatic decoder state reset.
-- **StreamingAsrManager** (`ASR/Streaming/`): Real-time streaming ASR with sliding window processing and cancellation support.
+- **AsrManager** (`ASR/Parakeet/`): Speech-to-text via TDT (Token Duration Transducer) decoding. Stateless per-chunk processing with automatic decoder state reset.
+- **SlidingWindowAsrManager** (`ASR/Parakeet/SlidingWindow/`): Real-time ASR with sliding window processing and cancellation support.
+- **StreamingAsrEngine** (`ASR/Parakeet/Streaming/`): Protocol for true streaming ASR engines (EOU, Nemotron) with cache-aware encoders.
+- **Qwen3AsrManager** (`ASR/Qwen3/`): Qwen3-based ASR with Whisper mel spectrogram frontend.
 - **OfflineDiarizerManager** (`Diarizer/`): Speaker separation via segmentation, embedding extraction, and VBx clustering. 17.7% DER on AMI dataset.
 - **VadManager** (`VAD/`): Voice activity detection with CoreML models.
 - **KokoroSynthesizer** (`TTS/Kokoro/`): Kokoro text-to-speech synthesis.
