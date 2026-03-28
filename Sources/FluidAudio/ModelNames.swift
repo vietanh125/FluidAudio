@@ -115,8 +115,6 @@ public enum Repo: String, CaseIterable {
     /// Local folder name used for caching
     public var folderName: String {
         switch self {
-        case .kokoro:
-            return "kokoro"
         case .parakeetEou160:
             return "parakeet-eou-streaming/160ms"
         case .parakeetEou320:
@@ -127,18 +125,8 @@ public enum Repo: String, CaseIterable {
             return "nemotron-streaming/1120ms"
         case .nemotronStreaming560:
             return "nemotron-streaming/560ms"
-        case .sortformer:
-            return "sortformer"
-        case .lseend:
-            return "ls-eend"
-        case .pocketTts:
-            return "pocket-tts"
-        case .multilingualG2p:
-            return "charsiu-g2p-byt5"
-        case .parakeetTdtCtc110m:
-            return "parakeet-tdt-ctc-110m"
         default:
-            return name
+            return name.replacingOccurrences(of: "-coreml", with: "")
         }
     }
 }
