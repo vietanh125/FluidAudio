@@ -125,8 +125,9 @@ struct PunctuationCommitLayerTests {
         #expect(update1.committedText == "")
         #expect(update1.ghostText == "Hello world")
 
-        // Wait for debounce timeout
+        // Wait for debounce timeout + extra time for callback task to complete
         try await Task.sleep(nanoseconds: 150_000_000)  // 150ms
+        try await Task.sleep(nanoseconds: 50_000_000)   // Extra 50ms for callback
 
         // Check callback was invoked with timeout commit
         let lastUpdate = await updateActor.lastUpdate
@@ -181,6 +182,7 @@ struct PunctuationCommitLayerTests {
         // New text should cancel previous timer
         _ = await layer.processPartialText("Hello world")
         try await Task.sleep(nanoseconds: 120_000_000)  // 120ms
+        try await Task.sleep(nanoseconds: 50_000_000)   // Extra 50ms for callback
 
         // Should only commit once (from second update)
         let timeoutCommits = await updateActor.timeoutCommitCount
