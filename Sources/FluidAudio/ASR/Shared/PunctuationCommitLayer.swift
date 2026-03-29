@@ -227,14 +227,24 @@ public actor PunctuationCommitLayer {
         lastUpdateTime = Date()
 
         // EOU signals end of utterance: commit everything
-        if !ghostText.isEmpty {
-            // Add separator space if committed text is not empty and doesn't already end with whitespace
-            if !committedText.isEmpty && !committedText.last!.isWhitespace {
-                committedText += " "
-            }
-            committedText += ghostText
-            ghostText = ""
+        guard !ghostText.isEmpty else {
+            let update = CommitLayerUpdate(
+                committedText: committedText,
+                ghostText: ghostText,
+                totalText: committedText,
+                lastCommitReason: .endOfUtterance,
+                timestamp: Date()
+            )
+            updateCallback?(update)
+            return update
         }
+
+        // Add separator space if committed text is not empty and doesn't already end with whitespace
+        if !committedText.isEmpty && committedText.last?.isWhitespace == false {
+            committedText += " "
+        }
+        committedText += ghostText
+        ghostText = ""
 
         let update = CommitLayerUpdate(
             committedText: committedText,
@@ -268,7 +278,7 @@ public actor PunctuationCommitLayer {
         }
 
         // Add separator space if committed text is not empty and doesn't already end with whitespace
-        if !committedText.isEmpty && !committedText.last!.isWhitespace {
+        if !committedText.isEmpty && committedText.last?.isWhitespace == false {
             committedText += " "
         }
         committedText += ghostText
@@ -337,7 +347,7 @@ public actor PunctuationCommitLayer {
         guard !ghostText.isEmpty else { return }
 
         // Add separator space if committed text is not empty and doesn't already end with whitespace
-        if !committedText.isEmpty && !committedText.last!.isWhitespace {
+        if !committedText.isEmpty && committedText.last?.isWhitespace == false {
             committedText += " "
         }
         committedText += ghostText
