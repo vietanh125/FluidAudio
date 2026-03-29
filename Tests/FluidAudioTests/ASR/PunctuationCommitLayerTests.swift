@@ -208,7 +208,7 @@ struct PunctuationCommitLayerTests {
         _ = await layer.processPartialText("Hello. World")
         let eouUpdate = await layer.processEOU()
 
-        #expect(eouUpdate.committedText == "Hello.  World")
+        #expect(eouUpdate.committedText == "Hello. World")
         #expect(eouUpdate.ghostText == "")
         #expect(eouUpdate.lastCommitReason == .endOfUtterance)
     }
@@ -283,7 +283,7 @@ struct PunctuationCommitLayerTests {
         _ = await layer.processPartialText("Hello. World")
         let commitUpdate = await layer.manualCommit()
 
-        #expect(commitUpdate.committedText == "Hello.  World")
+        #expect(commitUpdate.committedText == "Hello. World")
         #expect(commitUpdate.ghostText == "")
         #expect(commitUpdate.lastCommitReason == .manualCommit)
     }
@@ -411,7 +411,7 @@ struct PunctuationCommitLayerTests {
 
         let update = await layer.processPartialText("Hello. World")
 
-        #expect(update.totalText == "Hello.  World")
+        #expect(update.totalText == "Hello. World")
     }
 
     @Test("Total text with no ghost")

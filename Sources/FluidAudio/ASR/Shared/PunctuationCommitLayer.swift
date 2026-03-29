@@ -53,7 +53,7 @@ public struct CommitLayerUpdate: Sendable {
 /// # Usage Example
 ///
 /// ```swift
-/// let engine = StreamingAsrManagerFactory.create(.parakeetEou160ms)
+/// let engine = StreamingModelVariant.parakeetEou160ms.createManager()
 /// try await engine.loadModels()
 ///
 /// let commitLayer = PunctuationCommitLayer(
@@ -178,7 +178,8 @@ public actor PunctuationCommitLayer {
             } else if committedText.isEmpty {
                 totalText = ghostText
             } else {
-                totalText = committedText + " " + ghostText
+                // committedText already ends with whitespace from line 172
+                totalText = committedText + ghostText
             }
 
             let update = CommitLayerUpdate(
@@ -227,8 +228,8 @@ public actor PunctuationCommitLayer {
 
         // EOU signals end of utterance: commit everything
         if !ghostText.isEmpty {
-            // Add separator space if committed text is not empty
-            if !committedText.isEmpty {
+            // Add separator space if committed text is not empty and doesn't already end with whitespace
+            if !committedText.isEmpty && !committedText.last!.isWhitespace {
                 committedText += " "
             }
             committedText += ghostText
@@ -266,8 +267,8 @@ public actor PunctuationCommitLayer {
             return update
         }
 
-        // Add separator space if committed text is not empty
-        if !committedText.isEmpty {
+        // Add separator space if committed text is not empty and doesn't already end with whitespace
+        if !committedText.isEmpty && !committedText.last!.isWhitespace {
             committedText += " "
         }
         committedText += ghostText
@@ -335,8 +336,8 @@ public actor PunctuationCommitLayer {
     private func commitGhostText(reason: CommitReason) async {
         guard !ghostText.isEmpty else { return }
 
-        // Add separator space if committed text is not empty
-        if !committedText.isEmpty {
+        // Add separator space if committed text is not empty and doesn't already end with whitespace
+        if !committedText.isEmpty && !committedText.last!.isWhitespace {
             committedText += " "
         }
         committedText += ghostText
