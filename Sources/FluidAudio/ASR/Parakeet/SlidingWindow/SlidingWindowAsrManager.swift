@@ -395,13 +395,7 @@ public actor SlidingWindowAsrManager {
                 windowStartSample: windowStartSample
             )
 
-            // Update state
-            accumulatedTokens.append(contentsOf: tokens)
-            lastProcessedFrame = max(lastProcessedFrame, adjustedTimestamps.max() ?? 0)
-            segmentIndex += 1
-
             let processingTime = Date().timeIntervalSince(chunkStartTime)
-            processedChunks += 1
 
             // Convert only the current chunk tokens to text for clean incremental updates
             // The final result will use all accumulated tokens for proper deduplication
@@ -415,6 +409,12 @@ public actor SlidingWindowAsrManager {
                     processingTime: processingTime
                 )
             else { return }
+
+            // Update state only after all required async calls complete successfully
+            accumulatedTokens.append(contentsOf: tokens)
+            lastProcessedFrame = max(lastProcessedFrame, adjustedTimestamps.max() ?? 0)
+            segmentIndex += 1
+            processedChunks += 1
 
             logger.debug(
                 "Chunk \(self.processedChunks): '\(interim.text)', time: \(String(format: "%.3f", processingTime))s)"
