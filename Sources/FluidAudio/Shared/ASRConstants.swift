@@ -33,6 +33,18 @@ public enum ASRConstants {
     /// WER threshold for detailed error analysis in benchmarks
     public static let highWERThreshold: Double = 0.15
 
+    /// Punctuation token IDs (period, question mark, exclamation mark)
+    public static let punctuationTokens: [Int] = [7883, 7952, 7948]
+
+    /// Standard overlap in encoder frames (2.0s = 25 frames at 0.08s per frame)
+    public static let standardOverlapFrames: Int = 25
+
+    /// Minimum confidence score (for empty or very uncertain transcriptions)
+    public static let minConfidence: Float = 0.1
+
+    /// Maximum confidence score (perfect confidence)
+    public static let maxConfidence: Float = 1.0
+
     /// Calculate encoder frames from audio samples using proper ceiling division
     /// - Parameter samples: Number of audio samples
     /// - Returns: Number of encoder frames
