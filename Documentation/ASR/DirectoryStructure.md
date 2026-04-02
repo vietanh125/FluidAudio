@@ -74,7 +74,12 @@ ASR/
 │   │   ├── TdtDecoderState.swift
 │   │   ├── TdtDecoderV2.swift
 │   │   ├── TdtDecoderV3.swift
-│   │   └── TdtHypothesis.swift
+│   │   ├── TdtHypothesis.swift
+│   │   ├── TdtModelInference.swift      (Model inference operations)
+│   │   ├── TdtJointDecision.swift       (Joint network decision structure)
+│   │   ├── TdtJointInputProvider.swift  (Reusable feature provider)
+│   │   ├── TdtDurationMapping.swift     (Duration bin mapping utilities)
+│   │   └── TdtFrameNavigation.swift     (Frame position calculations)
 │   │
 │   ├── SlidingWindow/
 │   │   ├── SlidingWindowAsrManager.swift
