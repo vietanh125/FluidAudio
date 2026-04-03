@@ -87,6 +87,8 @@ enum DownloadCommand {
                 force: forceDownload, split: .validation)
             await DatasetDownloader.downloadCommonVoiceJapanese(
                 force: forceDownload, split: .test)
+        case "cohere-transcribe":
+            await downloadCohereTranscribe(force: forceDownload)
         case "all":
             await DatasetDownloader.downloadAMIDataset(variant: .sdm, force: forceDownload)
             await DatasetDownloader.downloadAMIDataset(variant: .ihm, force: forceDownload)
@@ -95,6 +97,31 @@ enum DownloadCommand {
             logger.error("Unsupported dataset: \(dataset)")
             printUsage()
             exit(1)
+        }
+    }
+
+    private static func downloadCohereTranscribe(force: Bool) async {
+        guard #available(macOS 15, iOS 18, *) else {
+            logger.error("Cohere Transcribe requires macOS 15 or later")
+            return
+        }
+
+        do {
+            _ = try await CohereAsrModels.download(force: force) { progress in
+                switch progress.phase {
+                case .listing:
+                    logger.info("Listing Cohere Transcribe files...")
+                case .downloading(let completed, let total):
+                    let percent = Int(progress.fractionCompleted * 100)
+                    logger.info(
+                        "Downloading Cohere Transcribe: \(completed)/\(total) files (\(percent)%)")
+                case .compiling(let modelName):
+                    logger.info("Compiling \(modelName)...")
+                }
+            }
+            logger.info("✅ Cohere Transcribe models downloaded successfully")
+        } catch {
+            logger.error("Failed to download Cohere Transcribe models: \(error)")
         }
     }
 
@@ -125,7 +152,7 @@ enum DownloadCommand {
                 cv-corpus-ja-validation     Common Voice Japanese validation split
                 cv-corpus-ja-test           Common Voice Japanese test split
                 cv-corpus-ja-all            All Common Voice Japanese splits
-                parakeet-models             Parakeet ASR models
+                cohere-transcribe           Cohere Transcribe 03-2026 ASR models
                 all                         All diarization datasets
 
             Examples:
@@ -133,6 +160,7 @@ enum DownloadCommand {
                 fluidaudio download --dataset librispeech-test-clean --force
                 fluidaudio download --dataset jsut-basic5000
                 fluidaudio download --dataset cv-corpus-ja-test
+                fluidaudio download --dataset cohere-transcribe
             """
         )
     }

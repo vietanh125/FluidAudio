@@ -76,6 +76,10 @@ struct FluidAudioCLI {
             await CtcZhCnBenchmark.run(arguments: Array(arguments.dropFirst(2)))
         case "ja-benchmark":
             await JapaneseAsrBenchmark.run(arguments: Array(arguments.dropFirst(2)))
+        case "cohere-benchmark":
+            await CohereAsrBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
+        case "cohere-transcribe":
+            await CohereTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
             printUsage()
         default:
@@ -116,6 +120,8 @@ struct FluidAudioCLI {
                 ctc-zh-cn-transcribe    Transcribe Mandarin Chinese audio with Parakeet CTC
                 ctc-zh-cn-benchmark     Run CTC zh-CN benchmark on THCHS-30 dataset
                 ja-benchmark            Run Japanese ASR benchmark on JSUT/Common Voice
+                cohere-benchmark        Run Cohere Transcribe 03-2026 benchmark
+                cohere-transcribe       Transcribe using Cohere Transcribe 03-2026
                 download                Download evaluation datasets
                 help                    Show this help message
 
@@ -143,6 +149,10 @@ struct FluidAudioCLI {
                 fluidaudio ja-benchmark --dataset jsut --samples 100
 
                 fluidaudio ja-benchmark --dataset cv-test --samples 500 --auto-download
+
+                fluidaudio cohere-benchmark --languages en_us,fr_fr,de_de --max-files 100
+
+                fluidaudio cohere-transcribe audio.wav --language zh
             """
         )
     }
