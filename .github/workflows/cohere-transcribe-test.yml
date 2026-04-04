@@ -12,7 +12,6 @@ on:
 
 jobs:
   cohere-transcribe-test:
-    if: false  # DISABLED - Remove this line to re-enable
     name: Cohere Transcribe - Pure CoreML Test (macOS 15)
     runs-on: macos-15
     permissions:
