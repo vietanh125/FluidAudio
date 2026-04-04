@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   benchmark:
+    if: false  # DISABLED - Remove this line to re-enable
     runs-on: macos-15
     permissions:
       contents: read

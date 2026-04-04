@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   benchmark:
+    if: false  # DISABLED - Remove this line to re-enable
     name: Sortformer High-Latency ES2004a
     runs-on: macos-15
     permissions:

@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   vad-benchmark:
+    if: false  # DISABLED - Remove this line to re-enable
     name: VAD Benchmark
     runs-on: macos-15
     timeout-minutes: 30

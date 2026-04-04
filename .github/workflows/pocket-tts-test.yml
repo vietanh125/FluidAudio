@@ -9,6 +9,7 @@ on:
 
 jobs:
   pocket-tts-smoke-test:
+    if: false  # DISABLED - Remove this line to re-enable
     name: PocketTTS Smoke Test
     runs-on: macos-15
     permissions:

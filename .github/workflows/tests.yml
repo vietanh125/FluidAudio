@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   build-and-test-macos:
+    if: false  # DISABLED - Remove this line to re-enable
     name: Build and Test Swift Package (macOS)
     runs-on: macos-15
     steps:

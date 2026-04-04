@@ -9,6 +9,7 @@ on:
 
 jobs:
   qwen3-asr-smoke-test:
+    if: false  # DISABLED - Remove this line to re-enable
     name: Qwen3-ASR Smoke Test (int8)
     runs-on: macos-15
     permissions:

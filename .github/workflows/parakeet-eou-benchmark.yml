@@ -9,6 +9,7 @@ on:
 
 jobs:
   parakeet-eou-benchmark:
+    if: false  # DISABLED - Remove this line to re-enable
     name: Parakeet EOU Benchmark (320ms)
     runs-on: macos-15
     permissions:

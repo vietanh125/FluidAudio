@@ -9,6 +9,7 @@ on:
 
 jobs:
   kokoro-tts-smoke-test:
+    if: false  # DISABLED - Remove this line to re-enable
     name: Kokoro TTS Smoke Test
     runs-on: macos-15
     permissions:

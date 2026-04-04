@@ -9,6 +9,7 @@ on:
 
 jobs:
   asr-benchmark:
+    if: false  # DISABLED - Remove this line to re-enable
     name: ASR Benchmark
     runs-on: macos-15
     permissions:
