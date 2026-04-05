@@ -1,108 +1,121 @@
 # Cohere Transcribe CoreML Export
 
-Export Cohere Transcribe (`CohereLabs/cohere-transcribe-03-2026`) to CoreML for on-device inference on Apple platforms.
+CoreML export of [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) for on-device speech recognition on Apple Silicon.
 
-## Quick Start
+## Status: ⚠️ Decoder Quality Issues
 
-```bash
-# Install dependencies
-uv sync
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Encoder** | ✅ Working | Perfect parity with reference (max diff 0.041) |
+| **Decoder** | ⚠️ Poor Quality | 292.89% average WER on LibriSpeech test-clean |
+| **Mel Preprocessing** | ✅ Working | Python implementation matches reference |
 
-# Export models
-uv run python export-encoder.py --output-dir build --precision float16
-uv run python export-decoder-cached.py --output-dir build --precision float16
+### Test Results (LibriSpeech test-clean, 10 samples)
 
-# Test pipeline
-uv run python test-full-pipeline.py
+```
+Average WER:  292.89%
+Median WER:   100.00%
+Min WER:      9.09%
+Max WER:      1581.82%
 ```
 
-## Status
+**Issue**: Decoder gets stuck in severe repetition loops on most samples, especially longer audio (>10s).
 
-✅ **Complete and Working** - Full pipeline processes real audio end-to-end
+## Current Models
 
-### Encoder
-- **Status:** ✅ Perfect match with reference (max diff: 0.041)
-- **Size:** 3.6 GB (FP16)
-- **Input:** `(1, 128, 3001)` mel spectrogram + length
-- **Output:** `(1, 376, 1024)` hidden states
+**FP16 Models (build/):**
+- `cohere_encoder.mlpackage` (3.6 GB) - ✅ Working perfectly
+- `cohere_decoder_cached.mlpackage` (291 MB) - ⚠️ Generates output but poor quality
+- `cohere_cross_kv_projector.mlpackage` (32 MB)
 
-### Decoder
-- **Status:** ✅ Working (generates tokens, reaches EOS)
-- **Size:** 289 MB (FP16)
-- **Architecture:** 8 layers, 8 heads, KV cache
-- **Cache:** `(8, 8, 108, 128)` per K/V
+**Important**: Quantization (INT8, INT6) either crashes or produces worse quality. Only FP16 models are functional.
 
-### Preprocessing
-- **Status:** ✅ Working Python implementation
-- **Parameters:** n_fft=1024, hop_length=160, n_mels=128
+## Usage
+
+### Testing
+
+```bash
+# Test on 10 LibriSpeech test-clean samples
+uv run python test-librispeech.py
+```
+
+### Exporting Models
+
+```bash
+# Export encoder (FP16)
+uv run python export-encoder.py --output-dir build --precision float16
+
+# Export decoder (FP16)
+uv run python export-decoder-cached.py --output-dir build --precision float16
+```
+
+## Critical Implementation Details
+
+### 10-Token Prompt Required
+
+The decoder requires a 10-token configuration prompt (not just start token):
+
+```python
+PROMPT_IDS = [13764, 7, 4, 16, 62, 62, 5, 9, 11, 13]
+# ▁ <|startofcontext|> <|startoftranscript|> <|emo:undefined|> 
+# <|en|> <|en|> <|pnc|> <|noitn|> <|notimestamp|> <|nodiarize|>
+```
+
+Without this prompt: **135% WER**  
+With prompt: **41-292% WER** (varies by sample length)
+
+### Decoder Cache Handling
+
+The decoder uses:
+- Cache shape: `(8, 8, 108, 128)` per K/V tensor
+- Masking approach (not truncation) to handle variable-length cache
+- Self-attention and cross-attention cache separate
+
+## Known Issues
+
+1. **Repetition loops**: Decoder repeats phrases ("then, then, then..." for 100+ tokens)
+2. **Quality degrades with length**: Short samples (~3s) work better than long ones (>10s)
+3. **Quantization fails**: INT8/INT6 either crash (MPS errors) or produce worse quality
+4. **Cache handling**: Suspected issue with KV cache update logic causing repetitions
 
 ## Files
 
-### Export Scripts
-- `export-encoder.py` - Encoder + projection layer export
-- `export-decoder-cached.py` - Decoder with KV cache export
-- `cohere_mel_spectrogram.py` - Python mel spectrogram preprocessing
-
-### Test Scripts
-- `test-full-pipeline.py` - Full pipeline test
-- `compare-models.py` - Comparison with reference models
-- `test-hybrid-our-encoder-ref-decoder.py` - Hybrid test (encoder validation)
-- `test-hybrid-ref-encoder-our-decoder.py` - Hybrid test (decoder validation)
-- `test-with-librispeech.py` - Ground truth WER testing
-
-### Utilities
+**Export Scripts:**
+- `export-encoder.py` - Encoder + projection layer
+- `export-decoder-cached.py` - Decoder with KV cache (current best)
+- `export-decoder-cached-v2.py` - Alternative decoder export (shape mismatch errors)
+- `export-decoder-with-cross-kv.py` - Optimized decoder with pre-computed cross-KV
 - `export-cross-kv-projector.py` - Cross-attention KV projector
-- `benchmark-models.py` - Performance benchmarking
-- `quantize-models.py` - Model quantization
-- `measure-memory.py` - Memory profiling
-- `download-librispeech-samples.py` - Dataset download utility
-- `create-test-audio.py` - Test audio generation
 
-### Documentation
-- `STATUS.md` - Current status and test results
-- `REVERSE_ENGINEERING.md` - Technical reverse engineering details
-- `SUMMARY.md` - Executive summary
+**Testing:**
+- `test-librispeech.py` - WER test on 10 LibriSpeech samples
+
+**Preprocessing:**
+- `cohere_mel_spectrogram.py` - Mel spectrogram computation (Python)
+
+**Documentation:**
+- `README.md` - This file
+- `REVERSE_ENGINEERING.md` - Technical details and investigation notes
+
+## Next Steps
+
+1. **Debug decoder cache handling** - Primary issue causing repetitions
+2. **Investigate why short samples work better** - Cache position handling?
+3. **Compare with BarathwajAnandan's export** - Their models also show 100% WER, suggesting fundamental export issue
+4. **Consider alternative decoder export approach** - Current masking approach may have bugs
 
 ## Requirements
 
+- macOS 14+ / iOS 17+
 - Python 3.10+
+- coremltools
 - PyTorch
-- CoreMLTools
-- Transformers
-- NumPy
-- SentencePiece
-- SoundFile
+- transformers
+- datasets (for testing)
+- sentencepiece (for tokenization)
 
-Managed via `uv` (see `pyproject.toml`)
+## License
 
-## Model Specs
+GPL-3.0 (matching upstream CoreML conversion)
 
-### Encoder (Conformer)
-- Hidden size: 1280 (encoder) → 1024 (after projection)
-- Input: 128 mel bins, up to 3001 frames (~30s audio)
-- Output: 376 frames × 1024 dimensions
-
-### Decoder (Transformer)
-- Layers: 8
-- Attention heads: 8
-- Head dimension: 128
-- Hidden size: 1024
-- Max sequence length: 108 tokens
-- Vocabulary: 51,865 tokens
-
-## Architecture
-
-The model is split into three components:
-
-1. **Mel Preprocessing** (Python) - Converts raw audio to mel spectrogram
-2. **Encoder** (CoreML) - Conformer blocks + projection layer
-3. **Decoder** (CoreML) - Autoregressive transformer with KV caching
-
-This separation allows for efficient on-device inference with proper cache management.
-
-## Notes
-
-- Models auto-download from HuggingFace on first use
-- Requires ~4GB disk space for encoder + decoder
-- FP16 precision recommended for size/speed balance
-- Targets iOS 17+ / macOS 14+
+Base model: Apache-2.0 ([CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026))
