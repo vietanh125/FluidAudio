@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export Cohere decoder using masking instead of slicing."""
+"""Export Cohere Transcribe decoder with minimal wrapper - no dynamic slicing."""
 
 import argparse
 import sys
@@ -13,8 +13,8 @@ from transformers import AutoModelForSpeechSeq2Seq
 from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 
 
-class MaskedCachedDecoderWrapper(nn.Module):
-    """Use masking instead of slicing to handle variable-length cache."""
+class MinimalCachedDecoderWrapper(nn.Module):
+    """Minimal wrapper - just format conversion, no slicing."""
 
     def __init__(self, full_model, max_seq_len=108):
         super().__init__()
@@ -22,57 +22,47 @@ class MaskedCachedDecoderWrapper(nn.Module):
         self.log_softmax = full_model.log_softmax
         dec_config = full_model.config.transf_decoder["config_dict"]
         self.num_layers = dec_config["num_layers"]
-        self.num_heads = dec_config["num_attention_heads"]
-        self.hidden_size = dec_config["hidden_size"]
-        self.head_dim = self.hidden_size // self.num_heads
         self.max_seq_len = max_seq_len
 
     def forward(self, input_id, encoder_hidden_states, cache_k, cache_v, step, cross_attention_mask):
         """
-        Use masking to zero out invalid cache positions instead of slicing.
-
-        The decoder will receive full-size cache, but positions > step are zeroed.
-        Combined with attention masking, this should be equivalent to truncation.
+        Args:
+            input_id: (1, 1)
+            encoder_hidden_states: (1, 376, 1024)
+            cache_k: (8, 8, 108, 128) - full cache with zeros for unused positions
+            cache_v: (8, 8, 108, 128)
+            step: (1,) - current step as int32 tensor
+            cross_attention_mask: (1, 1, 1, 376)
         """
-        batch_size = 1
-
-        # Create binary mask: 1 for positions < step, 0 for positions >= step
-        # Shape: (1, 1, max_seq_len, 1)
-        positions = torch.arange(self.max_seq_len, device=input_id.device).view(1, 1, -1, 1)
-        step_expanded = step.view(1, 1, 1, 1)
-        valid_mask = (positions < step_expanded).float()  # (1, 1, 108, 1)
-
-        # Build cache with masking
+        # Build cache - NO SLICING, pass everything as-is
         self_attention_cache = DynamicCache()
         cross_attention_cache = DynamicCache()
 
         for layer_idx in range(self.num_layers):
+            # Just add batch dim, no truncation
             layer_k = cache_k[layer_idx].unsqueeze(0)  # (1, 8, 108, 128)
             layer_v = cache_v[layer_idx].unsqueeze(0)
 
-            # Zero out positions >= step
-            layer_k_masked = layer_k * valid_mask  # Broadcasting: (1, 8, 108, 128) * (1, 1, 108, 1)
-            layer_v_masked = layer_v * valid_mask
-
-            self_attention_cache.update(layer_k_masked, layer_v_masked, layer_idx)
+            # Pass FULL cache - let the model handle masking
+            self_attention_cache.update(layer_k, layer_v, layer_idx)
 
         past_key_values = EncoderDecoderCache(self_attention_cache, cross_attention_cache)
 
-        # Positions tensor
-        positions_input = step.view(1, 1).long()
+        # Positions and masks - use step directly without .item()
+        positions = step.view(1, 1).long()
 
-        # Attention mask - mask positions >= step
-        # Make it max_seq_len + 1 to handle the new position being added
-        mask_len = self.max_seq_len + 1  # 109 to handle appending
-        pos_range = torch.arange(mask_len, device=input_id.device).view(1, 1, 1, -1)
-        step_exp = step.view(1, 1, 1, 1)
-        should_mask = pos_range >= step_exp  # (1, 1, 1, 109)
+        # Self-attention mask - fixed size, use masking to handle valid positions
+        # Create mask for positions 0 to 107 (all possible positions)
+        # Positions > step should be masked
+        pos_range = torch.arange(self.max_seq_len, device=input_id.device).view(1, 1, 1, -1)  # (1, 1, 1, 108)
+        step_expanded = step.view(1, 1, 1, 1)  # (1, 1, 1, 1)
 
+        # Mask: -inf where position > step (future positions)
         self_attention_mask = torch.where(
-            should_mask,
-            torch.full((1, 1, 1, mask_len), float("-inf"), device=input_id.device, dtype=encoder_hidden_states.dtype),
-            torch.zeros((1, 1, 1, mask_len), device=input_id.device, dtype=encoder_hidden_states.dtype)
-        )
+            pos_range > step_expanded,
+            torch.tensor(float("-inf"), device=input_id.device, dtype=encoder_hidden_states.dtype),
+            torch.tensor(0.0, device=input_id.device, dtype=encoder_hidden_states.dtype)
+        )  # (1, 1, 1, 108)
 
         # Cross attention mask
         cross_mask_reshaped = cross_attention_mask.squeeze(1).squeeze(1)
@@ -80,7 +70,7 @@ class MaskedCachedDecoderWrapper(nn.Module):
         # Decoder call
         decoder_outputs, updated_cache = self.decoder(
             input_ids=input_id,
-            positions=positions_input,
+            positions=positions,
             encoder_hidden_states=encoder_hidden_states,
             self_attention_mask=self_attention_mask,
             cross_attention_mask=cross_mask_reshaped,
@@ -90,31 +80,27 @@ class MaskedCachedDecoderWrapper(nn.Module):
         )
 
         # Get logits
-        logits = self.log_softmax(decoder_outputs).squeeze(1)
+        logits = self.log_softmax(decoder_outputs).squeeze(1)  # (1, vocab_size)
 
-        # Extract and pad cache
+        # Extract cache - NO SLICING, just pad if needed
         self_attn_cache = updated_cache.self_attention_cache
         new_cache_k_list = []
         new_cache_v_list = []
 
         for layer_idx in range(self.num_layers):
-            layer_k = self_attn_cache.key_cache[layer_idx].squeeze(0)
+            layer_k = self_attn_cache.key_cache[layer_idx].squeeze(0)  # (8, seq_len, 128)
             layer_v = self_attn_cache.value_cache[layer_idx].squeeze(0)
 
-            # Pad to max_seq_len (or truncate if too long)
+            # Pad to max_seq_len using F.pad (always safe, no conditionals)
             current_len = layer_k.shape[1]
-            if current_len < self.max_seq_len:
-                pad_len = self.max_seq_len - current_len
-                layer_k = torch.nn.functional.pad(layer_k, (0, 0, 0, pad_len))
-                layer_v = torch.nn.functional.pad(layer_v, (0, 0, 0, pad_len))
-            elif current_len > self.max_seq_len:
-                layer_k = layer_k[:, :self.max_seq_len, :]
-                layer_v = layer_v[:, :self.max_seq_len, :]
+            pad_len = self.max_seq_len - current_len
+            layer_k = torch.nn.functional.pad(layer_k, (0, 0, 0, pad_len))  # (8, 108, 128)
+            layer_v = torch.nn.functional.pad(layer_v, (0, 0, 0, pad_len))
 
             new_cache_k_list.append(layer_k)
             new_cache_v_list.append(layer_v)
 
-        new_cache_k = torch.stack(new_cache_k_list, dim=0)
+        new_cache_k = torch.stack(new_cache_k_list, dim=0)  # (8, 8, 108, 128)
         new_cache_v = torch.stack(new_cache_v_list, dim=0)
 
         return logits, new_cache_k, new_cache_v
@@ -122,7 +108,7 @@ class MaskedCachedDecoderWrapper(nn.Module):
 
 def export_decoder_cached(output_dir: Path, precision: str = "float16"):
     print("="*70)
-    print("Cohere Decoder Export - Masking Approach")
+    print("Cohere Decoder Export - Minimal Wrapper")
     print("="*70)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +123,7 @@ def export_decoder_cached(output_dir: Path, precision: str = "float16"):
     print("   ✓ Loaded")
 
     print("\n[2/5] Wrapping decoder...")
-    wrapped = MaskedCachedDecoderWrapper(model, max_seq_len=108)
+    wrapped = MinimalCachedDecoderWrapper(model, max_seq_len=108)
     wrapped.eval()
     print("   ✓ Wrapped")
 

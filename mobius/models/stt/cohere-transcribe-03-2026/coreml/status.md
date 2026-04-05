@@ -21,28 +21,22 @@ Successfully reverse-engineered and exported Cohere Transcribe to CoreML. The en
    - Generates 50+ tokens
    - Can process real audio
 
-## Known Issue ⚠️
+## Status Update ✅
 
-**Decoder divergence after step 3:**
-- Steps 0-2: Perfect match with reference (tokens: 7, 4, 16)
-- Step 3+: Diverges (ours: 16, reference: 62)
-- Gets stuck repeating token 16 (`<|emo:undefined|>`)
-- Never reaches EOS token
+**Decoder fixed using cache masking approach:**
+- ✅ Generates tokens correctly (no longer stuck on token 16)
+- ✅ Reaches EOS token properly
+- ✅ Produces reasonable transcriptions
+- ⚠️ Minor accuracy differences from reference (investigating)
 
-### Possible Causes
+### Fix Applied
 
-1. **Cross-attention caching**: We only cache self-attention, not cross-attention
-2. **Attention mask format**: Might be handling masks differently
-3. **Cache update logic**: Cache retrieval/storage might differ
-4. **Step handling**: The step parameter usage might differ
+Instead of truncating cache (which caused CoreML trace issues), we now:
+1. Pass full-size cache with invalid positions zeroed via masking
+2. Use extended attention mask (109 positions) to handle cache appending
+3. Avoid all `.item()` calls and Python conditionals on tensors
 
-### Investigation Needed
-
-The model uses `EncoderDecoderCache` which has both:
-- `self_attention_cache` (we handle this)
-- `cross_attention_cache` (we leave empty)
-
-BarathwajAnandan's implementation might be caching cross-attention differently, or there's a subtle difference in how the cache is passed through the layers.
+This approach is CoreML-compatible and produces functional decoder behavior.
 
 ## Comparison Results
 

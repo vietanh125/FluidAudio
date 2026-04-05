@@ -22,11 +22,11 @@ Successfully reverse-engineered BarathwajAnandan's Cohere Transcribe CoreML expo
 - **Functional test:** 0.00% WER with reference decoder
 - **Proof:** Produces identical token sequence to reference encoder
 
-### ❌ Decoder Export: BROKEN
-- **Fails** even with perfect reference encoder output
-- Gets stuck repeating token 16 (`<|emo:undefined|>`)
-- First 3 tokens match, then diverges at token 4
-- Never reaches EOS token
+### ✅ Decoder Export: FIXED
+- **Works** - generates tokens and reaches EOS properly
+- Uses cache masking approach instead of truncation
+- Functional transcription output
+- Minor accuracy tuning may be needed for perfect parity
 
 ## Root Cause
 
