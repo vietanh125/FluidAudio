@@ -1,0 +1,13 @@
+[project]
+name = "cohere-transcribe-coreml"
+version = "0.1.0"
+description = "CoreML export for Cohere Transcribe with KV cache"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.35.0",
+    "coremltools>=8.0",
+    "numpy>=1.24.0",
+    "soundfile>=0.12.0",
+    "librosa>=0.10.0",
+]
