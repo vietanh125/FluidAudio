@@ -923,6 +923,78 @@ struct DatasetDownloader {
             try? FileManager.default.removeItem(at: cloneDir)
         }
     }
+
+    /// Download FLEURS dataset using Python script
+    static func downloadFleursDataset(languages: String, maxSamples: Int) async {
+        logger.info("📥 Downloading FLEURS dataset...")
+
+        // Find the download script
+        let scriptName = "download_fleurs.py"
+        let possiblePaths = [
+            // When running from built CLI
+            FileManager.default.currentDirectoryPath + "/../Scripts/\(scriptName)",
+            // When running from Xcode/development
+            FileManager.default.currentDirectoryPath + "/Scripts/\(scriptName)",
+            // Relative to package root
+            #filePath.replacingOccurrences(of: "Sources/FluidAudioCLI/DatasetParsers/DatasetDownloader.swift", with: "Scripts/\(scriptName)")
+        ]
+
+        var scriptPath: String?
+        for path in possiblePaths {
+            if FileManager.default.fileExists(atPath: path) {
+                scriptPath = path
+                break
+            }
+        }
+
+        guard let scriptPath = scriptPath else {
+            logger.error("❌ Could not find \(scriptName) script")
+            logger.info("Expected locations:")
+            for path in possiblePaths {
+                logger.info("  - \(path)")
+            }
+            return
+        }
+
+        logger.info("Using script: \(scriptPath)")
+
+        // Build Python command
+        var command: [String]
+        if languages == "cohere" || languages == "all" {
+            command = ["python3", scriptPath, "--all", "--samples", "\(maxSamples)"]
+        } else {
+            command = ["python3", scriptPath, "--languages", languages, "--samples", "\(maxSamples)"]
+        }
+
+        logger.info("Running: \(command.joined(separator: " "))")
+
+        // Execute Python script
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = command
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+                logger.info(output)
+            }
+
+            if process.terminationStatus == 0 {
+                logger.info("✅ FLEURS download completed")
+            } else {
+                logger.error("❌ FLEURS download failed with code: \(process.terminationStatus)")
+            }
+        } catch {
+            logger.error("Failed to run download script: \(error)")
+        }
+    }
 }
 
 #endif

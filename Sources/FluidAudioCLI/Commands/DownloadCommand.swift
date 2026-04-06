@@ -74,6 +74,11 @@ enum DownloadCommand {
         case "cv-corpus-ja-test":
             await DatasetDownloader.downloadCommonVoiceJapanese(
                 force: forceDownload, split: .test)
+        case "fleurs-cohere":
+            await DatasetDownloader.downloadFleursDataset(languages: "cohere", maxSamples: 100)
+        case "fleurs":
+            // Allow custom language specification via environment or default to Cohere languages
+            await DatasetDownloader.downloadFleursDataset(languages: "cohere", maxSamples: 100)
         case "all":
             await DatasetDownloader.downloadAMIDataset(variant: .sdm, force: forceDownload)
             await DatasetDownloader.downloadAMIDataset(variant: .ihm, force: forceDownload)
@@ -109,6 +114,7 @@ enum DownloadCommand {
                 earnings22-kws              Earnings22 keyword spotting dataset
                 jsut-basic5000              JSUT Japanese speech dataset (5k utts)
                 cv-corpus-ja-test           Common Voice Japanese test split
+                fleurs, fleurs-cohere       FLEURS multilingual dataset (14 Cohere languages, 100 samples each)
                 parakeet-models             Parakeet ASR models
                 all                         All diarization datasets
 
@@ -117,6 +123,7 @@ enum DownloadCommand {
                 fluidaudio download --dataset librispeech-test-clean --force
                 fluidaudio download --dataset jsut-basic5000
                 fluidaudio download --dataset cv-corpus-ja-test
+                fluidaudio download --dataset fleurs
             """
         )
     }
