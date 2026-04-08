@@ -338,7 +338,7 @@ Qwen3-based speech recognition with Whisper mel spectrogram frontend.
 ## Text-to-Speech (TTS)
 
 ### KokoroTtsManager
-High-quality text-to-speech synthesis using Kokoro CoreML models.
+Text-to-speech synthesis using Kokoro CoreML models.
 
 **Key Methods:**
 - `init(defaultVoice:defaultSpeakerId:directory:computeUnits:customLexicon:)`
