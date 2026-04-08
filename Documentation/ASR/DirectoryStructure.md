@@ -63,9 +63,17 @@ ASR/
 │   ├── AsrManager.swift
 │   ├── AsrModels.swift
 │   ├── AsrManager+Transcription.swift
+│   ├── AsrManager+TokenProcessing.swift
 │   ├── AsrTypes.swift
 │   ├── AudioBuffer.swift
 │   ├── ChunkProcessor.swift
+│   ├── CtcJaManager.swift
+│   ├── CtcJaModels.swift
+│   ├── CtcZhCnManager.swift
+│   ├── CtcZhCnModels.swift
+│   ├── TdtJaManager.swift
+│   ├── TdtJaModels.swift
+│   ├── ParakeetLanguageModels.swift
 │   │
 │   ├── Decoder/
 │   │   ├── BlasIndex.swift
@@ -75,11 +83,15 @@ ASR/
 │   │   ├── TdtDecoderV2.swift
 │   │   ├── TdtDecoderV3.swift
 │   │   ├── TdtHypothesis.swift
-│   │   ├── TdtModelInference.swift      (Model inference operations)
-│   │   ├── TdtJointDecision.swift       (Joint network decision structure)
-│   │   ├── TdtJointInputProvider.swift  (Reusable feature provider)
-│   │   ├── TdtDurationMapping.swift     (Duration bin mapping utilities)
-│   │   └── TdtFrameNavigation.swift     (Frame position calculations)
+│   │   ├── TdtModelInference.swift
+│   │   ├── TdtJointDecision.swift
+│   │   ├── TdtJointInputProvider.swift
+│   │   ├── TdtDurationMapping.swift
+│   │   └── TdtFrameNavigation.swift
+│   │
+│   ├── TokenDeduplication/
+│   │   ├── SequenceMatch.swift
+│   │   └── SequenceMatcher.swift
 │   │
 │   ├── SlidingWindow/
 │   │   ├── SlidingWindowAsrManager.swift
@@ -94,6 +106,8 @@ ASR/
 │   │
 │   └── Streaming/
 │       ├── StreamingAsrManager.swift
+│       ├── StreamingAsrUtils.swift
+│       ├── EncoderCacheManager.swift
 │       ├── ParakeetModelVariant.swift
 │       ├── RnntDecoder.swift
 │       ├── Tokenizer.swift
@@ -105,20 +119,25 @@ ASR/
 │           ├── StreamingNemotronAsrManager+Pipeline.swift
 │           └── NemotronStreamingConfig.swift
 │
-└── Qwen3/
-    ├── Qwen3AsrConfig.swift
-    ├── Qwen3AsrManager.swift
-    ├── Qwen3AsrModels.swift
-    ├── Qwen3RoPE.swift
-    ├── Qwen3StreamingManager.swift
-    └── WhisperMelSpectrogram.swift
+├── Qwen3/
+│   ├── Qwen3AsrConfig.swift
+│   ├── Qwen3AsrManager.swift
+│   ├── Qwen3AsrModels.swift
+│   ├── Qwen3RoPE.swift
+│   ├── Qwen3StreamingManager.swift
+│   └── WhisperMelSpectrogram.swift
+│
+└── Shared/
+    └── PunctuationCommitLayer.swift
 ```
 
 ## What Changed and Why
 
-### Model family split: `Parakeet/` vs `Qwen3/`
+### Model family split: `Parakeet/` vs `Qwen3/` vs `Shared/`
 
-Parakeet and Qwen3 share zero code. Parakeet uses a FastConformer encoder with TDT decoding. Qwen3 uses a Whisper-style encoder-decoder transformer. Grouping by model family makes ownership obvious — if you are working on Parakeet, everything you need is under `Parakeet/`.
+Parakeet and Qwen3 share zero code. Parakeet uses a FastConformer encoder with TDT decoding. Qwen3 uses a Whisper-style encoder-decoder transformer. Grouping by model family makes ownership obvious — if you are working on Parakeet, everything you need is under `Parakeet/`. The `Shared/` directory contains utilities used across different ASR approaches.
+
+Language-specific models (Japanese CTC, Japanese TDT, Chinese CTC) are organized at the Parakeet root level with dedicated manager and model files (`CtcJaManager`, `TdtJaManager`, `CtcZhCnManager`, etc.). Common language model code is factored into `ParakeetLanguageModels.swift`.
 
 ### `TDT/` renamed to `Decoder/`
 
@@ -156,7 +175,16 @@ These features are only used by the sliding-window pipeline. CTC decoding runs o
 | File | Purpose |
 |---|---|
 | `StreamingAsrManager.swift` | Actor protocol defining the interface for true streaming engines (`loadModels`, `appendAudio`, `processBufferedAudio`, `finish`, `reset`) |
+| `StreamingAsrUtils.swift` | Utility functions for streaming ASR operations |
+| `EncoderCacheManager.swift` | Manages encoder cache state for streaming models |
 | `ParakeetModelVariant.swift` | Enum cataloguing all available streaming variants (EOU 160ms/320ms/1280ms, Nemotron 560ms/1120ms) with their repos, chunk sizes, and `createManager()` factory method |
+
+### New directories
+
+| Directory | Purpose |
+|---|---|
+| `TokenDeduplication/` | Sequence matching and deduplication for handling repeated tokens across chunk boundaries |
+| `Shared/` | Shared ASR utilities used across different model families (e.g., punctuation commit layer) |
 
 ### `Streaming/` subdivided into `EOU/` and `Nemotron/`
 
