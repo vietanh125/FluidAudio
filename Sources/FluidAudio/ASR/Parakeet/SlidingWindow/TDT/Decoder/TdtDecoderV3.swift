@@ -233,10 +233,10 @@ internal struct TdtDecoderV3: Sendable {
 
             // Apply script filtering if language is specified and top-K outputs are available
             if let language = language,
-               let vocab = vocabulary,
-               let topKIds = decision.topKIds,
-               let topKLogits = decision.topKLogits,
-               !topKIds.isEmpty
+                let vocab = vocabulary,
+                let topKIds = decision.topKIds,
+                let topKLogits = decision.topKLogits,
+                !topKIds.isEmpty
             {
                 if let filtered = ScriptDetection.filterTopK(
                     topKIds: topKIds,
@@ -325,10 +325,10 @@ internal struct TdtDecoderV3: Sendable {
 
                 // Apply script filtering in inner loop as well
                 if let language = language,
-                   let vocab = vocabulary,
-                   let topKIds = innerDecision.topKIds,
-                   let topKLogits = innerDecision.topKLogits,
-                   !topKIds.isEmpty
+                    let vocab = vocabulary,
+                    let topKIds = innerDecision.topKIds,
+                    let topKLogits = innerDecision.topKLogits,
+                    !topKIds.isEmpty
                 {
                     if let filtered = ScriptDetection.filterTopK(
                         topKIds: topKIds,

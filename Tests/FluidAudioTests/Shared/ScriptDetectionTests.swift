@@ -7,7 +7,7 @@ final class ScriptDetectionTests: XCTestCase {
 
     func testLatinScriptLanguages() {
         let latinLanguages: [Language] = [
-            .english, .polish, .spanish, .french, .german, .italian, .portuguese
+            .english, .polish, .spanish, .french, .german, .italian, .portuguese,
         ]
 
         for language in latinLanguages {
@@ -19,7 +19,7 @@ final class ScriptDetectionTests: XCTestCase {
 
     func testCyrillicScriptLanguages() {
         let cyrillicLanguages: [Language] = [
-            .russian, .ukrainian, .belarusian, .bulgarian, .serbian
+            .russian, .ukrainian, .belarusian, .bulgarian, .serbian,
         ]
 
         for language in cyrillicLanguages {
@@ -156,10 +156,10 @@ final class ScriptDetectionTests: XCTestCase {
         let topKIds = [1, 2, 3, 4]
         let topKLogits: [Float] = [0.9, 0.7, 0.5, 0.3]
         let vocabulary = [
-            1: "привет",      // Cyrillic
-            2: "hello",       // Latin
-            3: "мир",         // Cyrillic
-            4: "world",       // Latin
+            1: "привет",  // Cyrillic
+            2: "hello",  // Latin
+            3: "мир",  // Cyrillic
+            4: "world",  // Latin
         ]
 
         // Should return first Latin match (ID=2, "hello")
@@ -182,8 +182,8 @@ final class ScriptDetectionTests: XCTestCase {
         let topKLogits: [Float] = [0.9, 0.7, 0.5]
         let vocabulary = [
             1: "\u{2581}привет",  // Cyrillic with boundary marker
-            2: "\u{2581}hello",   // Latin with boundary marker
-            3: "\u{2581}мир",     // Cyrillic with boundary marker
+            2: "\u{2581}hello",  // Latin with boundary marker
+            3: "\u{2581}мир",  // Cyrillic with boundary marker
         ]
 
         let result = ScriptDetection.filterTopK(
@@ -261,9 +261,9 @@ final class ScriptDetectionTests: XCTestCase {
         let topKIds = [1, 2, 3]
         let topKLogits: [Float] = [0.9, 0.6, 0.4]
         let vocabulary = [
-            1: "\u{2581}при",     // Cyrillic (top-1, wrong script)
-            2: "\u{2581}prz",     // Polish/Latin (top-2, correct script)
-            3: "\u{2581}прі",     // Cyrillic
+            1: "\u{2581}при",  // Cyrillic (top-1, wrong script)
+            2: "\u{2581}prz",  // Polish/Latin (top-2, correct script)
+            3: "\u{2581}прі",  // Cyrillic
         ]
 
         let result = ScriptDetection.filterTopK(
