@@ -46,7 +46,14 @@ public struct ScriptDetection: Sendable {
     ///
     /// - Returns: True if all characters in the text match the target script
     public static func matches(_ text: String, script: Script) -> Bool {
-        let chars = text.unicodeScalars
+        // Strip SentencePiece word boundary marker (▁ U+2581) before checking
+        // This character is prepended to most tokens but doesn't indicate script
+        let cleanedText = text.replacingOccurrences(of: "\u{2581}", with: "")
+
+        // Empty after stripping boundary markers means no actual content to check
+        guard !cleanedText.isEmpty else { return false }
+
+        let chars = cleanedText.unicodeScalars
         switch script {
         case .latin:
             return chars.allSatisfy {
@@ -55,9 +62,22 @@ public struct ScriptDetection: Sendable {
                     || ($0.value >= 0x0100 && $0.value <= 0x017F)  // Latin Extended-A
             }
         case .cyrillic:
-            return chars.allSatisfy {
-                ($0.value >= 0x0400 && $0.value <= 0x04FF)  // Cyrillic
-                    || ($0.value >= 0x0020 && $0.value <= 0x007F)  // ASCII (spaces, punctuation)
+            return chars.allSatisfy { char in
+                let value = char.value
+                // Allow Cyrillic characters
+                if value >= 0x0400 && value <= 0x04FF {
+                    return true
+                }
+                // Allow spaces, punctuation, and digits (but NOT Latin letters)
+                // ASCII letters are 0x41-0x5A (A-Z) and 0x61-0x7A (a-z)
+                if value >= 0x0020 && value <= 0x007F {
+                    // Reject ASCII letters
+                    if (value >= 0x41 && value <= 0x5A) || (value >= 0x61 && value <= 0x7A) {
+                        return false
+                    }
+                    return true  // Allow other ASCII (spaces, punctuation, digits)
+                }
+                return false
             }
         }
     }

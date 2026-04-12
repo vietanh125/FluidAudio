@@ -45,7 +45,8 @@ extension AsrManager {
             progressHandler: { [weak self] progress in
                 guard let self else { return }
                 await self.progressEmitter.report(progress: progress)
-            }
+            },
+            language: language
         )
 
         return result

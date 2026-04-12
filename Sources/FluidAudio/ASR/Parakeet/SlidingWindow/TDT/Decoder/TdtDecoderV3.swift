@@ -245,7 +245,8 @@ internal struct TdtDecoderV3: Sendable {
                     preferredScript: language.script
                 ) {
                     label = filtered.tokenId
-                    // Use the filtered token's logit (convert to probability if needed)
+                    // Update score with filtered token's probability
+                    score = TdtDurationMapping.clampProbability(filtered.logit)
                 }
             }
 
@@ -336,6 +337,8 @@ internal struct TdtDecoderV3: Sendable {
                         preferredScript: language.script
                     ) {
                         label = filtered.tokenId
+                        // Update score with filtered token's probability
+                        score = TdtDurationMapping.clampProbability(filtered.logit)
                     }
                 }
 
