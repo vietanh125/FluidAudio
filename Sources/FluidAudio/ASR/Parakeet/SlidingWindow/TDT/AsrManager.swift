@@ -317,7 +317,7 @@ public actor AsrManager {
     ///   - decoderState: The TDT decoder state to use and update during transcription
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
-    public func transcribe(_ url: URL, decoderState: inout TdtDecoderState) async throws -> ASRResult {
+    public func transcribe(_ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil) async throws -> ASRResult {
         // Check file size to decide streaming vs memory loading
         if config.streamingEnabled {
             let audioFile = try AVAudioFile(forReading: url)
@@ -326,12 +326,12 @@ public actor AsrManager {
             let estimatedSamples = Int((Double(audioFile.length) * sampleRateRatio).rounded(.up))
 
             if estimatedSamples > config.streamingThreshold {
-                return try await transcribeDiskBacked(url, decoderState: &decoderState)
+                return try await transcribeDiskBacked(url, decoderState: &decoderState, language: language)
             }
         }
 
         let audioFloatArray = try audioConverter.resampleAudioFile(url)
-        let result = try await transcribe(audioFloatArray, decoderState: &decoderState)
+        let result = try await transcribe(audioFloatArray, decoderState: &decoderState, language: language)
         return result
     }
 
@@ -345,7 +345,7 @@ public actor AsrManager {
     ///   - decoderState: The TDT decoder state to use and update during transcription
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
-    public func transcribeDiskBacked(_ url: URL, decoderState: inout TdtDecoderState) async throws -> ASRResult {
+    public func transcribeDiskBacked(_ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil) async throws -> ASRResult {
         guard isAvailable else { throw ASRError.notInitialized }
 
         let startTime = Date()
@@ -377,7 +377,8 @@ public actor AsrManager {
                 progressHandler: { [weak self] progress in
                     guard let self else { return }
                     await self.progressEmitter.report(progress: progress)
-                }
+                },
+                language: language
             )
 
             sampleSource.cleanup()
