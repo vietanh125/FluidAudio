@@ -467,4 +467,17 @@ final class AsrModelsTests: XCTestCase {
         XCTAssertFalse(AsrModelVersion.tdtCtc110m.isCtcOnly)
         XCTAssertFalse(AsrModelVersion.tdtJa.isCtcOnly)
     }
+
+    func testJapaneseModelRepoMapping() {
+        // Verify CTC and TDT Japanese models use different repos (fixes issue #514)
+        XCTAssertEqual(AsrModelVersion.ctcJa.repo, .parakeetCtcJa)
+        XCTAssertEqual(AsrModelVersion.tdtJa.repo, .parakeetTdtJa)
+
+        // Verify the repos are actually different
+        XCTAssertNotEqual(Repo.parakeetCtcJa, Repo.parakeetTdtJa)
+
+        // Verify repo paths
+        XCTAssertEqual(Repo.parakeetCtcJa.rawValue, "FluidInference/parakeet-ctc-0.6b-ja-coreml")
+        XCTAssertEqual(Repo.parakeetTdtJa.rawValue, "FluidInference/parakeet-tdt-0.6b-ja-coreml")
+    }
 }

@@ -21,7 +21,7 @@ public enum AsrModelVersion: Sendable {
         case .tdtCtc110m: return .parakeetTdtCtc110m
         case .ctcZhCn: return .parakeetCtcZhCn
         case .ctcJa: return .parakeetCtcJa
-        case .tdtJa: return .parakeetCtcJa  // TDT v2 models uploaded to CTC repo
+        case .tdtJa: return .parakeetTdtJa
         }
     }
 
