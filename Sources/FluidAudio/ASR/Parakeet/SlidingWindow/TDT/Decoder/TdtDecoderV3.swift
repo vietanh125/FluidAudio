@@ -231,22 +231,26 @@ internal struct TdtDecoderV3: Sendable {
             label = decision.token
             var score = TdtDurationMapping.clampProbability(decision.probability)
 
-            // Apply script filtering if language is specified and top-K outputs are available
+            // Apply script filtering ONLY if top-1 token is wrong script
             if let language = language,
                 let vocab = vocabulary,
                 let topKIds = decision.topKIds,
                 let topKLogits = decision.topKLogits,
-                !topKIds.isEmpty
+                !topKIds.isEmpty,
+                let tokenText = vocab[label]
             {
-                if let filtered = ScriptDetection.filterTopK(
-                    topKIds: topKIds,
-                    topKLogits: topKLogits,
-                    vocabulary: vocab,
-                    preferredScript: language.script
-                ) {
-                    label = filtered.tokenId
-                    // Update score with filtered token's probability
-                    score = TdtDurationMapping.clampProbability(filtered.logit)
+                // Only filter if top-1 token doesn't match preferred script
+                if !ScriptDetection.matches(tokenText, script: language.script) {
+                    if let filtered = ScriptDetection.filterTopK(
+                        topKIds: topKIds,
+                        topKLogits: topKLogits,
+                        vocabulary: vocab,
+                        preferredScript: language.script
+                    ) {
+                        label = filtered.tokenId
+                        // Update score with filtered token's probability
+                        score = TdtDurationMapping.clampProbability(filtered.logit)
+                    }
                 }
             }
 
@@ -323,22 +327,26 @@ internal struct TdtDecoderV3: Sendable {
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
 
-                // Apply script filtering in inner loop as well
+                // Apply script filtering ONLY if top-1 token is wrong script
                 if let language = language,
                     let vocab = vocabulary,
                     let topKIds = innerDecision.topKIds,
                     let topKLogits = innerDecision.topKLogits,
-                    !topKIds.isEmpty
+                    !topKIds.isEmpty,
+                    let tokenText = vocab[label]
                 {
-                    if let filtered = ScriptDetection.filterTopK(
-                        topKIds: topKIds,
-                        topKLogits: topKLogits,
-                        vocabulary: vocab,
-                        preferredScript: language.script
-                    ) {
-                        label = filtered.tokenId
-                        // Update score with filtered token's probability
-                        score = TdtDurationMapping.clampProbability(filtered.logit)
+                    // Only filter if top-1 token doesn't match preferred script
+                    if !ScriptDetection.matches(tokenText, script: language.script) {
+                        if let filtered = ScriptDetection.filterTopK(
+                            topKIds: topKIds,
+                            topKLogits: topKLogits,
+                            vocabulary: vocab,
+                            preferredScript: language.script
+                        ) {
+                            label = filtered.tokenId
+                            // Update score with filtered token's probability
+                            score = TdtDurationMapping.clampProbability(filtered.logit)
+                        }
                     }
                 }
 
