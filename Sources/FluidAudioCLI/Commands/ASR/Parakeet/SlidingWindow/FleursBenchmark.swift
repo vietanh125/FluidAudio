@@ -530,6 +530,23 @@ public class FLEURSBenchmark {
         return (results, allHighWERCases)
     }
 
+    /// Map FLEURS language code to FluidAudio Language enum for script filtering
+    private func mapToLanguageEnum(_ fleursCode: String) -> Language? {
+        // Map FLEURS codes (e.g., "pl_pl") to Language enum (e.g., .polish)
+        switch fleursCode {
+        case "en_us": return .english
+        case "pl_pl": return .polish
+        case "es_419": return .spanish
+        case "fr_fr": return .french
+        case "de_de": return .german
+        case "it_it": return .italian
+        case "ru_ru": return .russian
+        case "uk_ua": return .ukrainian
+        case "bg_bg": return .bulgarian
+        default: return nil  // Language not in our enum or doesn't need script filtering
+        }
+    }
+
     /// Process samples for a specific language
     private func processLanguageSamples(
         samples: [FLEURSSample],
@@ -573,7 +590,10 @@ public class FLEURSBenchmark {
                 let url = URL(fileURLWithPath: sample.audioPath)
                 var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
                 let inferenceStartTime = Date()
-                let result = try await asrManager.transcribe(url, decoderState: &decoderState)
+
+                // Use script filtering if language is supported
+                let languageParam = mapToLanguageEnum(language)
+                let result = try await asrManager.transcribe(url, decoderState: &decoderState, language: languageParam)
                 let processingTime = Date().timeIntervalSince(inferenceStartTime)
 
                 // Calculate metrics if reference transcription is available
