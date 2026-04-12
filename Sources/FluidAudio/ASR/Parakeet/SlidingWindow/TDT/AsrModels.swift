@@ -252,19 +252,57 @@ extension AsrModels {
         // Get version-specific file names
         let fileNames = getModelFileNames(version: version)
 
-        // Load decoder and joint as well
-        let decoderAndJoint = try await DownloadUtils.loadModels(
+        // Load decoder first
+        let decoderModels = try await DownloadUtils.loadModels(
             version.repo,
-            modelNames: [fileNames.decoder, fileNames.joint],
+            modelNames: [fileNames.decoder],
             directory: parentDirectory,
             computeUnits: config.computeUnits,
             progressHandler: progressHandler
         )
 
-        guard let decoderModel = decoderAndJoint[fileNames.decoder],
-            let jointModel = decoderAndJoint[fileNames.joint]
-        else {
-            throw AsrModelsError.loadingFailed("Failed to load decoder or joint model")
+        guard let decoderModel = decoderModels[fileNames.decoder] else {
+            throw AsrModelsError.loadingFailed("Failed to load decoder model")
+        }
+
+        // For v3, try JointDecisionv3 first (with top-K outputs for script filtering),
+        // fall back to standard JointDecision if not found.
+        let jointV3FileName = "JointDecisionv3.mlmodelc"
+        let repoDir = repoPath(from: directory, version: version)
+        let jointV3Path = repoDir.appendingPathComponent(jointV3FileName)
+
+        var jointModel: MLModel?
+
+        if version == .v3 && FileManager.default.fileExists(atPath: jointV3Path.path) {
+            let jointConfig = MLModelConfiguration()
+            jointConfig.computeUnits = config.computeUnits
+            jointModel = try? MLModel(contentsOf: jointV3Path, configuration: jointConfig)
+            if jointModel != nil {
+                logger.info("Loaded JointDecisionv3 (with top-K outputs)")
+            } else {
+                logger.warning("JointDecisionv3 found but failed to load, falling back to JointDecision")
+            }
+        }
+
+        // Fall back to version-specific JointDecision if v3 not found or failed to load
+        if jointModel == nil {
+            let jointModels = try await DownloadUtils.loadModels(
+                version.repo,
+                modelNames: [fileNames.joint],
+                directory: parentDirectory,
+                computeUnits: config.computeUnits,
+                progressHandler: progressHandler
+            )
+
+            guard let fallbackJoint = jointModels[fileNames.joint] else {
+                throw AsrModelsError.loadingFailed("Failed to load joint model")
+            }
+            jointModel = fallbackJoint
+            logger.info("Loaded JointDecision (standard, no top-K)")
+        }
+
+        guard let unwrappedJointModel = jointModel else {
+            throw AsrModelsError.loadingFailed("Joint model is nil after loading attempts")
         }
 
         // [Beta] Optionally load CTC head model for custom vocabulary.
@@ -311,7 +349,7 @@ extension AsrModels {
             encoder: encoderModel,
             preprocessor: preprocessorModel,
             decoder: decoderModel,
-            joint: jointModel,
+            joint: unwrappedJointModel,
             ctcHead: ctcHeadModel,
             configuration: config,
             vocabulary: try loadVocabulary(from: directory, version: version),

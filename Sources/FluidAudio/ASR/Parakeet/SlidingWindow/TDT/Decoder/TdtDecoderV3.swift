@@ -69,7 +69,9 @@ internal struct TdtDecoderV3: Sendable {
         decoderState: inout TdtDecoderState,
         contextFrameAdjustment: Int = 0,
         isLastChunk: Bool = false,
-        globalFrameOffset: Int = 0
+        globalFrameOffset: Int = 0,
+        language: Language? = nil,
+        vocabulary: [Int: String]? = nil
     ) async throws -> TdtHypothesis {
         // Early exit for very short audio (< 160ms)
         guard encoderSequenceLength > 1 else {
@@ -229,6 +231,24 @@ internal struct TdtDecoderV3: Sendable {
             label = decision.token
             var score = TdtDurationMapping.clampProbability(decision.probability)
 
+            // Apply script filtering if language is specified and top-K outputs are available
+            if let language = language,
+               let vocab = vocabulary,
+               let topKIds = decision.topKIds,
+               let topKLogits = decision.topKLogits,
+               !topKIds.isEmpty
+            {
+                if let filtered = ScriptDetection.filterTopK(
+                    topKIds: topKIds,
+                    topKLogits: topKLogits,
+                    vocabulary: vocab,
+                    preferredScript: language.script
+                ) {
+                    label = filtered.tokenId
+                    // Use the filtered token's logit (convert to probability if needed)
+                }
+            }
+
             // Map duration bin to actual frame count
             // durationBins typically = [0,1,2,3,4] meaning skip 0-4 frames
             var duration = try TdtDurationMapping.mapDurationBin(
@@ -301,6 +321,24 @@ internal struct TdtDecoderV3: Sendable {
 
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
+
+                // Apply script filtering in inner loop as well
+                if let language = language,
+                   let vocab = vocabulary,
+                   let topKIds = innerDecision.topKIds,
+                   let topKLogits = innerDecision.topKLogits,
+                   !topKIds.isEmpty
+                {
+                    if let filtered = ScriptDetection.filterTopK(
+                        topKIds: topKIds,
+                        topKLogits: topKLogits,
+                        vocabulary: vocab,
+                        preferredScript: language.script
+                    ) {
+                        label = filtered.tokenId
+                    }
+                }
+
                 duration = try TdtDurationMapping.mapDurationBin(
                     innerDecision.durationBin, durationBins: config.tdtConfig.durationBins)
 

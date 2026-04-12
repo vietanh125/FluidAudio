@@ -203,7 +203,8 @@ public actor AsrManager {
         decoderState: inout TdtDecoderState,
         contextFrameAdjustment: Int = 0,
         isLastChunk: Bool = false,
-        globalFrameOffset: Int = 0
+        globalFrameOffset: Int = 0,
+        language: Language? = nil
     ) async throws -> TdtHypothesis {
         // Route to appropriate decoder based on model version
         guard let models = asrModels, let decoder_ = decoderModel, let joint = jointModel else {
@@ -274,7 +275,9 @@ public actor AsrManager {
                 decoderState: &decoderState,
                 contextFrameAdjustment: contextFrameAdjustment,
                 isLastChunk: isLastChunk,
-                globalFrameOffset: globalFrameOffset
+                globalFrameOffset: globalFrameOffset,
+                language: language,
+                vocabulary: language != nil ? vocabulary : nil
             )
         case .ctcZhCn:
             throw ASRError.processingFailed(
@@ -406,14 +409,15 @@ public actor AsrManager {
     /// - Throws: ASRError if transcription fails or models are not initialized
     public func transcribe(
         _ audioSamples: [Float],
-        decoderState: inout TdtDecoderState
+        decoderState: inout TdtDecoderState,
+        language: Language? = nil
     ) async throws -> ASRResult {
         let shouldEmitProgress = audioSamples.count > ASRConstants.maxModelSamples
         if shouldEmitProgress {
             _ = await progressEmitter.ensureSession()
         }
         do {
-            let result = try await transcribeWithState(audioSamples, decoderState: &decoderState)
+            let result = try await transcribeWithState(audioSamples, decoderState: &decoderState, language: language)
 
             if shouldEmitProgress {
                 await progressEmitter.finishSession()

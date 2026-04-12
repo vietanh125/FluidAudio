@@ -11,4 +11,10 @@ internal struct TdtJointDecision {
 
     /// Duration bin index (maps to number of encoder frames to skip)
     let durationBin: Int
+
+    /// Top-K candidate token IDs (optional, only present in JointDecisionv3)
+    let topKIds: [Int]?
+
+    /// Top-K candidate logits (optional, only present in JointDecisionv3)
+    let topKLogits: [Float]?
 }

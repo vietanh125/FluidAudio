@@ -131,7 +131,29 @@ internal struct TdtModelInference: Sendable {
         let durationPointer = durationArray.dataPointer.bindMemory(to: Int32.self, capacity: durationArray.count)
         let durationBin = Int(durationPointer[0])
 
-        return TdtJointDecision(token: token, probability: probability, durationBin: durationBin)
+        // Extract top-K outputs if available (JointDecisionv3)
+        var topKIds: [Int]? = nil
+        var topKLogits: [Float]? = nil
+
+        if let topKIdsArray = output.featureValue(for: "top_k_ids")?.multiArrayValue {
+            let count = topKIdsArray.count
+            let idsPointer = topKIdsArray.dataPointer.bindMemory(to: Int32.self, capacity: count)
+            topKIds = (0..<count).map { Int(idsPointer[$0]) }
+        }
+
+        if let topKLogitsArray = output.featureValue(for: "top_k_logits")?.multiArrayValue {
+            let count = topKLogitsArray.count
+            let logitsPointer = topKLogitsArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+            topKLogits = (0..<count).map { logitsPointer[$0] }
+        }
+
+        return TdtJointDecision(
+            token: token,
+            probability: probability,
+            durationBin: durationBin,
+            topKIds: topKIds,
+            topKLogits: topKLogits
+        )
     }
 
     /// Normalize decoder projection into [1, hiddenSize, 1] layout via BLAS copy.
