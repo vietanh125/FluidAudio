@@ -158,6 +158,7 @@ public final class LSEENDDiarizer: Diarizer {
         lock.withLock {
             updateTimelineConfig(engine: engine)
             _engine = engine
+            _cachedConverter = nil
             _timeline = DiarizerTimeline(config: _timelineConfig)
             _session = nil
             resetBuffersLocked()
@@ -176,6 +177,7 @@ public final class LSEENDDiarizer: Diarizer {
         lock.withLock {
             updateTimelineConfig(engine: engine)
             _engine = engine
+            _cachedConverter = nil
             _timeline = DiarizerTimeline(config: _timelineConfig)
             _session = nil
             resetBuffersLocked()
@@ -284,7 +286,6 @@ public final class LSEENDDiarizer: Diarizer {
             }
 
             if let update {
-                let numSpeakers = engine.metadata.realOutputDim
                 let result = DiarizerChunkResult(
                     startFrame: max(0, update.startFrame - _visibleStartFrameOffset),
                     finalizedPredictions: update.probabilities.values,
@@ -417,7 +418,6 @@ public final class LSEENDDiarizer: Diarizer {
             return nil
         }
 
-        let numSpeakers = engine.metadata.realOutputDim
         let result = DiarizerChunkResult(
             startFrame: max(0, update.startFrame - _visibleStartFrameOffset),
             finalizedPredictions: update.probabilities.values,
@@ -559,8 +559,6 @@ public final class LSEENDDiarizer: Diarizer {
                 try engine.createSession(
                     inputSampleRate: engine.targetSampleRate)
             }
-        let numSpeakers = engine.metadata.realOutputDim
-
         // Push all audio at once
         if let update = try session.pushAudio(normalized) {
             let chunk = DiarizerChunkResult(
@@ -639,7 +637,6 @@ public final class LSEENDDiarizer: Diarizer {
         defer { lock.unlock() }
 
         guard let engine = _engine, let session = _session else { return nil }
-        let numSpeakers = engine.metadata.realOutputDim
         var lastResult: DiarizerChunkResult?
 
         // Flush pending audio first — clear unconditionally so failed audio isn't retained.
@@ -698,10 +695,12 @@ public final class LSEENDDiarizer: Diarizer {
             return nil
         }
 
-        if _cachedConverter == nil {
-            _cachedConverter = AudioConverter(sampleRate: Double(engine.targetSampleRate))
-        }
-        return try _cachedConverter!.resample(Array(samples), from: sourceSampleRate)
+        let converter = _cachedConverter ?? {
+            let c = AudioConverter(sampleRate: Double(engine.targetSampleRate))
+            _cachedConverter = c
+            return c
+        }()
+        return try converter.resample(Array(samples), from: sourceSampleRate)
     }
 
     private func updateTimelineConfig(engine: LSEENDInferenceHelper) {
