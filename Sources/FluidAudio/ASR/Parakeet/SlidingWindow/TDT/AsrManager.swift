@@ -210,20 +210,43 @@ public actor AsrManager {
             throw ASRError.notInitialized
         }
 
-        // Adapt config's encoderHiddenSize to match the loaded model version
-        // (e.g. default config uses 1024 but tdtCtc110m needs 512)
+        // Adapt config to match the loaded model version
+        // Step 1: Adapt blankId if needed (e.g. default 8192 but tdtJa needs 3072)
+        var workingConfig = config
+        if config.tdtConfig.blankId != models.version.blankId {
+            let adaptedTdtConfig = TdtConfig(
+                includeTokenDuration: config.tdtConfig.includeTokenDuration,
+                maxSymbolsPerStep: config.tdtConfig.maxSymbolsPerStep,
+                durationBins: config.tdtConfig.durationBins,
+                blankId: models.version.blankId,
+                boundarySearchFrames: config.tdtConfig.boundarySearchFrames,
+                maxTokensPerChunk: config.tdtConfig.maxTokensPerChunk,
+                consecutiveBlankLimit: config.tdtConfig.consecutiveBlankLimit
+            )
+
+            workingConfig = ASRConfig(
+                sampleRate: workingConfig.sampleRate,
+                tdtConfig: adaptedTdtConfig,
+                encoderHiddenSize: workingConfig.encoderHiddenSize,
+                parallelChunkConcurrency: workingConfig.parallelChunkConcurrency,
+                streamingEnabled: workingConfig.streamingEnabled,
+                streamingThreshold: workingConfig.streamingThreshold
+            )
+        }
+
+        // Step 2: Adapt encoderHiddenSize if needed (e.g. default 1024 but tdtCtc110m needs 512)
         let adaptedConfig: ASRConfig
-        if config.encoderHiddenSize != models.version.encoderHiddenSize {
+        if workingConfig.encoderHiddenSize != models.version.encoderHiddenSize {
             adaptedConfig = ASRConfig(
-                sampleRate: config.sampleRate,
-                tdtConfig: config.tdtConfig,
+                sampleRate: workingConfig.sampleRate,
+                tdtConfig: workingConfig.tdtConfig,
                 encoderHiddenSize: models.version.encoderHiddenSize,
-                parallelChunkConcurrency: config.parallelChunkConcurrency,
-                streamingEnabled: config.streamingEnabled,
-                streamingThreshold: config.streamingThreshold
+                parallelChunkConcurrency: workingConfig.parallelChunkConcurrency,
+                streamingEnabled: workingConfig.streamingEnabled,
+                streamingThreshold: workingConfig.streamingThreshold
             )
         } else {
-            adaptedConfig = config
+            adaptedConfig = workingConfig
         }
 
         switch models.version {

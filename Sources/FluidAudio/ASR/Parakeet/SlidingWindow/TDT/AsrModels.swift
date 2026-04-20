@@ -469,22 +469,23 @@ extension AsrModels {
         }
 
         let defaultUnits = defaultConfiguration().computeUnits
+        let fileNames = getModelFileNames(version: version)
 
         let specs: [DownloadSpec]
         if version.hasFusedEncoder {
             specs = [
                 // Fused preprocessor+encoder runs on ANE
                 DownloadSpec(fileName: Names.preprocessorFile, computeUnits: defaultUnits),
-                DownloadSpec(fileName: Names.decoderFile, computeUnits: defaultUnits),
-                DownloadSpec(fileName: Names.jointFile, computeUnits: defaultUnits),
+                DownloadSpec(fileName: fileNames.decoder, computeUnits: defaultUnits),
+                DownloadSpec(fileName: fileNames.joint, computeUnits: defaultUnits),
             ]
         } else {
             specs = [
                 // Preprocessor ops map to CPU-only across all platforms.
                 DownloadSpec(fileName: Names.preprocessorFile, computeUnits: .cpuOnly),
                 DownloadSpec(fileName: Names.encoderFile, computeUnits: defaultUnits),
-                DownloadSpec(fileName: Names.decoderFile, computeUnits: defaultUnits),
-                DownloadSpec(fileName: Names.jointFile, computeUnits: defaultUnits),
+                DownloadSpec(fileName: fileNames.decoder, computeUnits: defaultUnits),
+                DownloadSpec(fileName: fileNames.joint, computeUnits: defaultUnits),
             ]
         }
 
@@ -554,10 +555,11 @@ extension AsrModels {
         let config = MLModelConfiguration()
         config.computeUnits = .cpuOnly
 
+        let fileNames = getModelFileNames(version: version)
         var modelsToValidate = [
             ("Preprocessor", ModelNames.ASR.preprocessorFile),
-            ("Decoder", ModelNames.ASR.decoderFile),
-            ("Joint", ModelNames.ASR.jointFile),
+            ("Decoder", fileNames.decoder),
+            ("Joint", fileNames.joint),
         ]
         if !version.hasFusedEncoder {
             modelsToValidate.insert(("Encoder", ModelNames.ASR.encoderFile), at: 1)
