@@ -241,6 +241,7 @@ public enum ModelNames {
         // opportunistically and falls back to jointFile if unavailable. It is therefore
         // intentionally NOT part of requiredModels, so cache-existence checks don't
         // trigger re-downloads when the v3 variant is missing from HuggingFace.
+        // The mirror comment lives on `AsrModels.getRequiredModels(version:)`.
 
         /// Required models for fused frontend (110m hybrid: preprocessor contains encoder)
         public static let requiredModelsFused: Set<String> = [

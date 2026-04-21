@@ -38,7 +38,13 @@ public enum Language: String, Sendable, CaseIterable {
     }
 }
 
-/// Writing script categories
+/// Writing script categories.
+///
+/// The Unicode ranges associated with each case are designed to be
+/// **non-overlapping**: no single character can match both `.latin` and
+/// `.cyrillic` as letters. This invariant is what lets `matches` use a
+/// simple `allSatisfy` per-script check without a "reject the other script"
+/// guard on both sides — see `TokenLanguageFilter.matches(_:script:)`.
 public enum Script: Sendable {
     case latin
     case cyrillic
@@ -54,13 +60,29 @@ public enum Script: Sendable {
 /// plug in here later without changing the call-site API.
 public struct TokenLanguageFilter: Sendable {
 
-    /// Check if text matches a specific script
+    /// Check whether every character in `text` is compatible with the given script.
     ///
     /// - Parameters:
-    ///   - text: Text to check
-    ///   - script: Target script (Latin or Cyrillic)
+    ///   - text: Text to check.
+    ///   - script: Target script (Latin or Cyrillic).
     ///
-    /// - Returns: True if all characters in the text match the target script
+    /// - Returns: `true` if every character (after stripping the SentencePiece
+    ///   word-boundary marker) belongs to an allowed range for `script`.
+    ///
+    /// ## Allowed ranges
+    ///
+    /// **Latin:** ASCII, Latin-1, Latin Extended-A/B, Latin Extended Additional.
+    /// Digits (0x30–0x39), ASCII punctuation, and whitespace fall inside ASCII and
+    /// are therefore allowed — treated as script-neutral. The Latin path does **not**
+    /// need an explicit "reject Cyrillic" guard because the Cyrillic block
+    /// (U+0400–U+04FF) does not overlap any Latin range; `allSatisfy` over the Latin
+    /// ranges already fails for any Cyrillic scalar.
+    ///
+    /// **Cyrillic:** the Cyrillic block (U+0400–U+04FF) plus script-neutral ASCII
+    /// (space, digits, punctuation) — but ASCII letters A–Z/a–z are explicitly
+    /// rejected. This asymmetry exists because ASCII overlaps with the Latin range,
+    /// so Cyrillic *does* need an explicit Latin-letter rejection to avoid
+    /// accidentally accepting tokens like "cat".
     public static func matches(_ text: String, script: Script) -> Bool {
         // Strip SentencePiece word boundary marker (▁ U+2581) before checking
         // This character is prepended to most tokens but doesn't indicate script
@@ -72,8 +94,10 @@ public struct TokenLanguageFilter: Sendable {
         let chars = cleanedText.unicodeScalars
         switch script {
         case .latin:
+            // No reverse Cyrillic guard needed: the Cyrillic block is outside every
+            // Latin range below, so `allSatisfy` naturally rejects Cyrillic characters.
             return chars.allSatisfy {
-                ($0.value >= 0x0020 && $0.value <= 0x007F)  // ASCII
+                ($0.value >= 0x0020 && $0.value <= 0x007F)  // ASCII (incl. digits, punct)
                     || ($0.value >= 0x00A0 && $0.value <= 0x00FF)  // Latin-1
                     || ($0.value >= 0x0100 && $0.value <= 0x017F)  // Latin Extended-A
                     || ($0.value >= 0x0180 && $0.value <= 0x024F)  // Latin Extended-B (Romanian ș ț, etc.)
@@ -86,27 +110,38 @@ public struct TokenLanguageFilter: Sendable {
                 if value >= 0x0400 && value <= 0x04FF {
                     return true
                 }
-                // Allow spaces, punctuation, and digits (but NOT Latin letters)
-                // ASCII letters are 0x41-0x5A (A-Z) and 0x61-0x7A (a-z)
+                // Allow script-neutral ASCII (digits, punctuation, whitespace) but
+                // explicitly reject ASCII letters — unlike Cyrillic, ASCII overlaps
+                // with the Latin range, so the asymmetric guard is required.
+                // ASCII letters are 0x41-0x5A (A-Z) and 0x61-0x7A (a-z).
                 if value >= 0x0020 && value <= 0x007F {
-                    // Reject ASCII letters
                     if (value >= 0x41 && value <= 0x5A) || (value >= 0x61 && value <= 0x7A) {
                         return false
                     }
-                    return true  // Allow other ASCII (spaces, punctuation, digits)
+                    return true
                 }
                 return false
             }
         }
     }
 
-    /// Filter top-K candidates by script and return the highest-probability match.
+    /// Filter top-K candidates by script and return the highest-logit match.
     ///
-    /// The returned probability is computed via softmax over the top-K logits so the
-    /// caller receives a value in [0, 1] suitable for use as a confidence score.
-    /// This approximates the true probability by assuming the top-K captures most of
-    /// the probability mass — a reasonable assumption for K=10 in an 8k vocabulary
-    /// when the model is reasonably confident.
+    /// Walks every entry in `topKIds`/`topKLogits`, keeps the one with the greatest
+    /// logit whose text matches `preferredScript`, and returns it together with a
+    /// softmax probability. The scan is explicit argmax — we do **not** assume the
+    /// CoreML top-K output is sorted by logit.
+    ///
+    /// ## Probability semantics
+    ///
+    /// The returned probability is softmax **over the top-K logits only**, not over
+    /// the full vocabulary. Because the denominator excludes ~vocab-size−K terms,
+    /// this value is systematically larger than a full-vocab softmax. It is
+    /// intended for relative ranking inside the filtered path and for bounded
+    /// confidence-score consumers, not as a drop-in replacement for a full-vocab
+    /// probability. For K=64 in an 8k vocabulary, the top-K typically captures
+    /// most of the probability mass when the model is reasonably confident, so the
+    /// approximation is close but not equal to the true probability.
     ///
     /// - Parameters:
     ///   - topKIds: Array of token IDs (from `top_k_ids` output).
@@ -115,9 +150,9 @@ public struct TokenLanguageFilter: Sendable {
     ///   - vocabulary: Mapping from token IDs to text.
     ///   - preferredScript: Script to filter for.
     ///
-    /// - Returns: Token ID and probability (in [0, 1]) of the highest-probability
-    ///   token matching the script, or `nil` if no match is found or the input
-    ///   arrays are mismatched/empty.
+    /// - Returns: Token ID and top-K softmax probability (in [0, 1]) of the
+    ///   highest-logit in-script candidate, or `nil` if no in-script match exists
+    ///   or the input arrays are mismatched/empty.
     public static func filterTopK(
         topKIds: [Int],
         topKLogits: [Float],
@@ -129,15 +164,25 @@ public struct TokenLanguageFilter: Sendable {
         let count = min(topKIds.count, topKLogits.count)
         guard count > 0 else { return nil }
 
+        // Argmax over in-script candidates. No assumption that CoreML returned
+        // top-K in sorted order — scan all K and keep the highest-logit match.
+        var bestIdx: Int = -1
+        var bestLogit: Float = -.infinity
         for idx in 0..<count {
             let tokenId = topKIds[idx]
             guard let tokenText = vocabulary[tokenId] else { continue }
             guard matches(tokenText, script: preferredScript) else { continue }
 
-            let probability = softmaxProbability(of: idx, logits: topKLogits, count: count)
-            return (tokenId, probability)
+            let logit = topKLogits[idx]
+            if logit > bestLogit {
+                bestLogit = logit
+                bestIdx = idx
+            }
         }
-        return nil
+        guard bestIdx >= 0 else { return nil }
+
+        let probability = softmaxProbability(of: bestIdx, logits: topKLogits, count: count)
+        return (topKIds[bestIdx], probability)
     }
 
     /// Compute softmax probability of `index` within a slice of `logits` of length `count`.

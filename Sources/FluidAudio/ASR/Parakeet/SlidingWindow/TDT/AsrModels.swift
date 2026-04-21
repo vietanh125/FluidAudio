@@ -183,7 +183,8 @@ extension AsrModels {
     /// downloaded opportunistically in `loadInternal` with fallback to the
     /// standard `JointDecision`, so marking it required would cause
     /// `modelsExist` to return false (and trigger a full re-download) whenever
-    /// the v3 variant is missing from HuggingFace.
+    /// the v3 variant is missing from HuggingFace. The mirror comment lives in
+    /// `ModelNames.Parakeet` next to `jointV3File` / `requiredModels`.
     private static func getRequiredModels(version: AsrModelVersion) -> Set<String> {
         switch version {
         case .tdtJa:

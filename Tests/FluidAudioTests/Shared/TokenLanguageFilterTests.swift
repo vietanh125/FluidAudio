@@ -202,7 +202,7 @@ final class TokenLanguageFilterTests: XCTestCase {
 
     // MARK: - Filter Top-K Tests
 
-    func testFilterTopKReturnsFirstMatchingToken() {
+    func testFilterTopKReturnsHighestLogitMatch() {
         let topKIds = [1, 2, 3, 4]
         let topKLogits: [Float] = [0.9, 0.7, 0.5, 0.3]
         let vocabulary = [
@@ -212,7 +212,7 @@ final class TokenLanguageFilterTests: XCTestCase {
             4: "world",  // Latin
         ]
 
-        // Should return first Latin match (ID=2, "hello")
+        // Highest-logit in-script (Latin) candidate is ID=2 ("hello") at logit 0.7
         let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
@@ -228,6 +228,30 @@ final class TokenLanguageFilterTests: XCTestCase {
             XCTAssertLessThan(probability, 1.0)
             XCTAssertEqual(probability, 0.2695, accuracy: 0.01)
         }
+    }
+
+    func testFilterTopKArgmaxOverUnsortedLogits() {
+        // Regression test: do not assume CoreML returned top-K in sorted order.
+        // Here the first Latin match (index 1, logit 0.4) is NOT the highest-logit
+        // Latin candidate (index 3, logit 0.8). filterTopK must pick index 3.
+        let topKIds = [1, 2, 3, 4]
+        let topKLogits: [Float] = [0.9, 0.4, 0.1, 0.8]
+        let vocabulary = [
+            1: "привет",  // Cyrillic
+            2: "hi",  // Latin (first match, but NOT highest logit)
+            3: "мир",  // Cyrillic
+            4: "world",  // Latin (highest-logit in-script candidate)
+        ]
+
+        let result = TokenLanguageFilter.filterTopK(
+            topKIds: topKIds,
+            topKLogits: topKLogits,
+            vocabulary: vocabulary,
+            preferredScript: .latin
+        )
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.tokenId, 4, "Must pick argmax-logit match, not first match")
     }
 
     func testFilterTopKWithSentencePieceBoundaryMarker() {

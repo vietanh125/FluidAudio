@@ -233,30 +233,15 @@ internal struct TdtDecoderV3: Sendable {
 
             let blankId = config.tdtConfig.blankId  // 8192 for v3 models
 
-            // Apply script filtering ONLY if top-1 token is non-blank and wrong script.
-            // Blank tokens represent silence; replacing them via top-K would hallucinate
-            // speech. Some vocabularies map blankId to an empty string, which would
-            // otherwise pass the `!matches(...)` check and trigger the filter.
-            if label != blankId,
-                let language = language,
-                let vocab = vocabulary,
-                let topKIds = decision.topKIds,
-                let topKLogits = decision.topKLogits,
-                !topKIds.isEmpty,
-                let tokenText = vocab[label],
-                !TokenLanguageFilter.matches(tokenText, script: language.script),
-                let filtered = TokenLanguageFilter.filterTopK(
-                    topKIds: topKIds,
-                    topKLogits: topKLogits,
-                    vocabulary: vocab,
-                    preferredScript: language.script
-                )
-            {
-                label = filtered.tokenId
-                // filtered.probability is already in [0, 1] (softmax over top-K),
-                // so clamping is a no-op safety guard rather than a unit conversion.
-                score = TdtDurationMapping.clampProbability(filtered.probability)
-            }
+            Self.applyScriptFilter(
+                label: &label,
+                score: &score,
+                topKIds: decision.topKIds,
+                topKLogits: decision.topKLogits,
+                language: language,
+                vocabulary: vocabulary,
+                blankId: blankId
+            )
 
             // Map duration bin to actual frame count
             // durationBins typically = [0,1,2,3,4] meaning skip 0-4 frames
@@ -329,27 +314,15 @@ internal struct TdtDecoderV3: Sendable {
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
 
-                // Apply script filtering ONLY if top-1 token is non-blank and wrong script.
-                // See outer-loop comment: blanks must not be replaced via top-K.
-                if label != blankId,
-                    let language = language,
-                    let vocab = vocabulary,
-                    let topKIds = innerDecision.topKIds,
-                    let topKLogits = innerDecision.topKLogits,
-                    !topKIds.isEmpty,
-                    let tokenText = vocab[label],
-                    !TokenLanguageFilter.matches(tokenText, script: language.script),
-                    let filtered = TokenLanguageFilter.filterTopK(
-                        topKIds: topKIds,
-                        topKLogits: topKLogits,
-                        vocabulary: vocab,
-                        preferredScript: language.script
-                    )
-                {
-                    label = filtered.tokenId
-                    // filtered.probability is a proper softmax probability in [0, 1].
-                    score = TdtDurationMapping.clampProbability(filtered.probability)
-                }
+                Self.applyScriptFilter(
+                    label: &label,
+                    score: &score,
+                    topKIds: innerDecision.topKIds,
+                    topKLogits: innerDecision.topKLogits,
+                    language: language,
+                    vocabulary: vocabulary,
+                    blankId: blankId
+                )
 
                 duration = try TdtDurationMapping.mapDurationBin(
                     innerDecision.durationBin, durationBins: config.tdtConfig.durationBins)
@@ -576,6 +549,50 @@ internal struct TdtDecoderV3: Sendable {
     }
 
     // MARK: - Private Helper Methods
+
+    /// If `label` is a non-blank token whose text does not match the target
+    /// script, replace it with the highest-logit in-script candidate from the
+    /// top-K outputs (and update `score` to the corresponding top-K softmax
+    /// probability). No-op when language/vocab/top-K data is absent, when the
+    /// predicted label is already in-script, or when no in-script candidate
+    /// exists in the top-K.
+    ///
+    /// Blank tokens are deliberately excluded: they represent silence and must
+    /// not be replaced via top-K (doing so would hallucinate speech). Some
+    /// vocabularies also map blankId to an empty string, which would otherwise
+    /// fall through the `!matches(...)` guard below.
+    ///
+    /// The probability returned by `filterTopK` is already clamped to [0, 1];
+    /// the extra `clampProbability` call is a defensive pass-through consistent
+    /// with how the top-1 path treats the joint output.
+    private static func applyScriptFilter(
+        label: inout Int,
+        score: inout Float,
+        topKIds: [Int]?,
+        topKLogits: [Float]?,
+        language: Language?,
+        vocabulary: [Int: String]?,
+        blankId: Int
+    ) {
+        guard label != blankId,
+            let language = language,
+            let vocab = vocabulary,
+            let topKIds = topKIds,
+            let topKLogits = topKLogits,
+            !topKIds.isEmpty,
+            let tokenText = vocab[label],
+            !TokenLanguageFilter.matches(tokenText, script: language.script),
+            let filtered = TokenLanguageFilter.filterTopK(
+                topKIds: topKIds,
+                topKLogits: topKLogits,
+                vocabulary: vocab,
+                preferredScript: language.script
+            )
+        else { return }
+
+        label = filtered.tokenId
+        score = TdtDurationMapping.clampProbability(filtered.probability)
+    }
 
     internal func extractEncoderTimeStep(
         _ encoderOutput: MLMultiArray, timeIndex: Int
