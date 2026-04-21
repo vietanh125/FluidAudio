@@ -81,6 +81,11 @@ internal struct TdtDecoderV3: Sendable {
         // Use encoder hidden size from config (512 for 110m, 1024 for 0.6B)
         let expectedEncoderHidden = config.encoderHiddenSize
 
+        // Script-filtering consumes top-K; skip the extraction when the caller
+        // didn't provide a language (default path), so v3 joint runs don't pay
+        // for K-length array allocations they'll never use.
+        let needsTopK = language != nil
+
         // Build a stride-aware view so we can access encoder frames without extra copies
         let encoderFrames = try EncoderFrameView(
             encoderOutput: encoderOutput,
@@ -222,7 +227,8 @@ internal struct TdtDecoderV3: Sendable {
                 inputProvider: jointInput,
                 tokenIdBacking: tokenIdBacking,
                 tokenProbBacking: tokenProbBacking,
-                durationBacking: durationBacking
+                durationBacking: durationBacking,
+                needsTopK: needsTopK
             )
 
             // Predict token (what to emit) and duration (how many frames to skip)
@@ -304,7 +310,8 @@ internal struct TdtDecoderV3: Sendable {
                     inputProvider: jointInput,
                     tokenIdBacking: tokenIdBacking,
                     tokenProbBacking: tokenProbBacking,
-                    durationBacking: durationBacking
+                    durationBacking: durationBacking,
+                    needsTopK: needsTopK
                 )
 
                 label = innerDecision.token
@@ -451,7 +458,8 @@ internal struct TdtDecoderV3: Sendable {
                     inputProvider: jointInput,
                     tokenIdBacking: tokenIdBacking,
                     tokenProbBacking: tokenProbBacking,
-                    durationBacking: durationBacking
+                    durationBacking: durationBacking,
+                    needsTopK: needsTopK
                 )
 
                 var token = decision.token
