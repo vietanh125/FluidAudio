@@ -175,12 +175,10 @@ internal struct TdtDecoderV3: Sendable {
         var emissionsAtThisTimestamp = 0
         let maxSymbolsPerStep = config.tdtConfig.maxSymbolsPerStep  // Usually 5-10
         var tokensProcessedThisChunk = 0  // Track tokens per chunk to prevent runaway decoding
-        var iterCount = 0
 
         // ===== MAIN DECODING LOOP =====
         // Process each encoder frame until we've consumed all audio
         while activeMask {
-            iterCount += 1
             try Task.checkCancellation()
             // Use last emitted token for decoder context, or blank if starting
             var label = hypothesis.lastToken ?? config.tdtConfig.blankId
@@ -290,9 +288,7 @@ internal struct TdtDecoderV3: Sendable {
             // - Avoids expensive LSTM computations for silence frames
             // - Maintains linguistic continuity across gaps in speech
             // - Speeds up processing by 2-3x for audio with silence
-            var innerLoopCount = 0
             while advanceMask {
-                innerLoopCount += 1
                 try Task.checkCancellation()
                 timeIndicesCurrentLabels = timeIndices
 
@@ -458,12 +454,25 @@ internal struct TdtDecoderV3: Sendable {
                     durationBacking: durationBacking
                 )
 
-                let token = decision.token
-                let score = TdtDurationMapping.clampProbability(decision.probability)
+                var token = decision.token
+                var score = TdtDurationMapping.clampProbability(decision.probability)
 
                 // Also get duration for proper timestamp calculation
                 let duration = try TdtDurationMapping.mapDurationBin(
                     decision.durationBin, durationBins: config.tdtConfig.durationBins)
+
+                // Apply the same script filter as the main loop. Without this, the
+                // final few tokens of an utterance can bypass the filter and leak
+                // wrong-script candidates in multilingual runs.
+                Self.applyScriptFilter(
+                    label: &token,
+                    score: &score,
+                    topKIds: decision.topKIds,
+                    topKLogits: decision.topKLogits,
+                    language: language,
+                    vocabulary: vocabulary,
+                    blankId: config.tdtConfig.blankId
+                )
 
                 if token == config.tdtConfig.blankId {
                     consecutiveBlanks += 1
@@ -525,7 +534,8 @@ internal struct TdtDecoderV3: Sendable {
             isLastChunk: isLastChunk
         )
 
-        // No filtering at decoder level - let post-processing handle deduplication
+        // Script filtering (when `language` is provided) happens per step above;
+        // post-processing still handles deduplication at a higher level.
         return hypothesis
     }
 
@@ -677,24 +687,6 @@ internal struct TdtDecoderV3: Sendable {
 }
 
 extension MLMultiArray {
-    /// Fast L2 norm (float32 optimized)
-    func l2Normf() -> Float {
-        let n = self.count
-        if self.dataType == .float32 {
-            return self.dataPointer.withMemoryRebound(to: Float.self, capacity: n) { ptr in
-                var ss: Float = 0
-                vDSP_svesq(ptr, 1, &ss, vDSP_Length(n))
-                return sqrtf(ss)
-            }
-        } else {
-            var ss: Float = 0
-            for i in 0..<n {
-                let v = self[i].floatValue
-                ss += v * v
-            }
-            return sqrtf(ss)
-        }
-    }
-    /// "BxTxH" style string
+    /// "BxTxH" style string. Used by `TdtModelInference` for shape-mismatch error messages.
     var shapeString: String { shape.map { "\($0.intValue)" }.joined(separator: "x") }
 }
