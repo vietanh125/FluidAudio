@@ -237,7 +237,7 @@ internal struct TdtDecoderV3: Sendable {
 
             let blankId = config.tdtConfig.blankId  // 8192 for v3 models
 
-            Self.applyScriptFilter(
+            Self.applyTokenLanguageFilter(
                 label: &label,
                 score: &score,
                 topKIds: decision.topKIds,
@@ -317,7 +317,7 @@ internal struct TdtDecoderV3: Sendable {
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
 
-                Self.applyScriptFilter(
+                Self.applyTokenLanguageFilter(
                     label: &label,
                     score: &score,
                     topKIds: innerDecision.topKIds,
@@ -572,7 +572,7 @@ internal struct TdtDecoderV3: Sendable {
     /// The probability returned by `filterTopK` is already clamped to [0, 1];
     /// the extra `clampProbability` call is a defensive pass-through consistent
     /// with how the top-1 path treats the joint output.
-    private static func applyScriptFilter(
+    private static func applyTokenLanguageFilter(
         label: inout Int,
         score: inout Float,
         topKIds: [Int]?,
