@@ -58,7 +58,17 @@ public enum Script: Sendable {
 /// text is in the expected script. Currently partitions by Unicode script only;
 /// per-language token allowlists (e.g. distinguishing Polish from Czech) could
 /// plug in here later without changing the call-site API.
-public struct TokenLanguageFilter: Sendable {
+///
+/// The surface here is intentionally `internal`: `matches` and `filterTopK` are
+/// only meaningful when you have raw top-K ids/logits plus a CoreML vocab map,
+/// i.e. inside the decoder path. The public language hook is `Language` + the
+/// `language:` parameter on the transcribe APIs.
+internal struct TokenLanguageFilter: Sendable {
+
+    /// SentencePiece word-boundary marker (▁, U+2581). Prepended to most tokens
+    /// as a whitespace indicator; it carries no script information and is
+    /// stripped before script checks.
+    private static let sentencePieceBoundary: Unicode.Scalar = "\u{2581}"
 
     /// Check whether every character in `text` is compatible with the given script.
     ///
@@ -83,10 +93,10 @@ public struct TokenLanguageFilter: Sendable {
     /// rejected. This asymmetry exists because ASCII overlaps with the Latin range,
     /// so Cyrillic *does* need an explicit Latin-letter rejection to avoid
     /// accidentally accepting tokens like "cat".
-    public static func matches(_ text: String, script: Script) -> Bool {
-        // Strip SentencePiece word boundary marker (▁ U+2581) before checking
-        // This character is prepended to most tokens but doesn't indicate script
-        let cleanedText = text.replacingOccurrences(of: "\u{2581}", with: "")
+    static func matches(_ text: String, script: Script) -> Bool {
+        // Strip SentencePiece word boundary marker before checking — it carries
+        // no script information and would otherwise fail every range check.
+        let cleanedText = text.replacingOccurrences(of: String(sentencePieceBoundary), with: "")
 
         // Empty after stripping boundary markers means no actual content to check
         guard !cleanedText.isEmpty else { return false }
@@ -153,7 +163,7 @@ public struct TokenLanguageFilter: Sendable {
     /// - Returns: Token ID and top-K softmax probability (in [0, 1]) of the
     ///   highest-logit in-script candidate, or `nil` if no in-script match exists
     ///   or the input arrays are mismatched/empty.
-    public static func filterTopK(
+    static func filterTopK(
         topKIds: [Int],
         topKLogits: [Float],
         vocabulary: [Int: String],
