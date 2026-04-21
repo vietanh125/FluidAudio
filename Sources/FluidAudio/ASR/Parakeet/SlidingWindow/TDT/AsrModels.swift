@@ -143,7 +143,10 @@ extension AsrModels {
 
     private static func inferredVersion(from directory: URL) -> AsrModelVersion? {
         let directoryPath = directory.path.lowercased()
-        let knownVersions: [AsrModelVersion] = [.tdtCtc110m, .v2, .v3]
+        // `.ctcZhCn` is intentionally absent: it is rejected at the top of
+        // `load(...)` and has its own dedicated loader (`CtcZhCnManager`), so
+        // inference callers should never hit this path with a ctcZhCn dir.
+        let knownVersions: [AsrModelVersion] = [.tdtCtc110m, .v2, .v3, .tdtJa]
 
         for version in knownVersions {
             if directoryPath.contains(version.repo.folderName.lowercased()) {
@@ -169,9 +172,11 @@ extension AsrModels {
                 vocabulary: ModelNames.TDTJa.vocabularyFile
             )
         case .v3:
-            // v3 uses JointDecisionv3 exclusively (top-K outputs are required
-            // for language-aware script filtering, and are zero-cost when the
-            // feature is disabled).
+            // v3 uses JointDecisionv3 exclusively. Top-K outputs (`top_k_ids`,
+            // `top_k_logits`) are always computed by the joint graph, but
+            // Swift-side extraction is gated by `needsTopK` in
+            // `TdtModelInference.runJointPrepared` so callers that don't pass
+            // `language:` pay no extra allocations per step.
             return (
                 decoder: Names.decoderFile,
                 joint: Names.jointV3File,
@@ -288,7 +293,11 @@ extension AsrModels {
         )
 
         guard let unwrappedJointModel = jointModels[fileNames.joint] else {
-            throw AsrModelsError.loadingFailed("Failed to load joint model \(fileNames.joint)")
+            let hint =
+                version == .v3
+                ? " (required for v3; delete the models directory to force a fresh download)"
+                : ""
+            throw AsrModelsError.loadingFailed("Failed to load joint model \(fileNames.joint)\(hint)")
         }
         logger.info("Loaded \(fileNames.joint)")
 
