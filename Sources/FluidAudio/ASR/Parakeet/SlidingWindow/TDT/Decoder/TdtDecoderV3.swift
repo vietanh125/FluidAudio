@@ -469,19 +469,6 @@ internal struct TdtDecoderV3: Sendable {
                 let duration = try TdtDurationMapping.mapDurationBin(
                     decision.durationBin, durationBins: config.tdtConfig.durationBins)
 
-                // Apply the same script filter as the main loop. Without this, the
-                // final few tokens of an utterance can bypass the filter and leak
-                // wrong-script candidates in multilingual runs.
-                Self.applyScriptFilter(
-                    label: &token,
-                    score: &score,
-                    topKIds: decision.topKIds,
-                    topKLogits: decision.topKLogits,
-                    language: language,
-                    vocabulary: vocabulary,
-                    blankId: config.tdtConfig.blankId
-                )
-
                 if token == config.tdtConfig.blankId {
                     consecutiveBlanks += 1
                 } else {
@@ -542,8 +529,10 @@ internal struct TdtDecoderV3: Sendable {
             isLastChunk: isLastChunk
         )
 
-        // Script filtering (when `language` is provided) happens per step above;
-        // post-processing still handles deduplication at a higher level.
+        // Script filtering runs per step in the main and inner decode loops.
+        // The last-chunk flush loop was empirically blank/punct-dominated on
+        // the issue #512 Polish samples (0 filter swaps across 7 clips), so no
+        // filter call is needed here; post-processing handles deduplication.
         return hypothesis
     }
 
