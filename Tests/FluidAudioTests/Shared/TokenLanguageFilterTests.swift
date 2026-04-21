@@ -69,10 +69,13 @@ final class TokenLanguageFilterTests: XCTestCase {
     }
 
     func testBoundaryMarkerOnly() {
-        // Boundary marker alone should return false (empty after stripping)
-        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}", script: .latin))
-        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}", script: .cyrillic))
-        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}\u{2581}", script: .latin))
+        // A token that is *only* the SentencePiece boundary marker carries no
+        // script signal, so we treat it as script-neutral (matches both).
+        // filterTopK's argmax is then free to rank it alongside real candidates
+        // rather than skipping it outright.
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}\u{2581}", script: .latin))
     }
 
     // MARK: - Polish Language Tests (Issue #512)
@@ -182,8 +185,10 @@ final class TokenLanguageFilterTests: XCTestCase {
     // MARK: - Edge Cases
 
     func testEmptyString() {
-        XCTAssertFalse(TokenLanguageFilter.matches("", script: .latin))
-        XCTAssertFalse(TokenLanguageFilter.matches("", script: .cyrillic))
+        // Mirrors testBoundaryMarkerOnly: no content means no script signal,
+        // so we return true (script-neutral) for both Latin and Cyrillic.
+        XCTAssertTrue(TokenLanguageFilter.matches("", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("", script: .cyrillic))
     }
 
     func testWhitespaceOnly() {
@@ -328,6 +333,29 @@ final class TokenLanguageFilterTests: XCTestCase {
         }
     }
 
+    func testFilterTopKPicksNegativeInfinityLogit() {
+        // Edge case: if the only in-script candidate has logit == -infinity,
+        // the earlier `logit > bestLogit` check (bestLogit seeded at -infinity)
+        // incorrectly returned nil. The "first match wins unconditionally"
+        // branch ensures we pick it.
+        let topKIds = [1, 2]
+        let topKLogits: [Float] = [0.9, -.infinity]
+        let vocabulary = [
+            1: "привет",  // Cyrillic, not our script
+            2: "hello",  // Latin, but -inf logit
+        ]
+
+        let result = TokenLanguageFilter.filterTopK(
+            topKIds: topKIds,
+            topKLogits: topKLogits,
+            vocabulary: vocabulary,
+            preferredScript: .latin
+        )
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.tokenId, 2)
+    }
+
     func testFilterTopKEmptyArrays() {
         let result = TokenLanguageFilter.filterTopK(
             topKIds: [],
@@ -462,6 +490,16 @@ final class TokenLanguageFilterTests: XCTestCase {
         // Test characters in Latin Extended Additional (U+1E00 to U+1EFF)
         XCTAssertTrue(TokenLanguageFilter.matches("Ḁ", script: .latin))  // U+1E00
         XCTAssertTrue(TokenLanguageFilter.matches("ế", script: .latin))  // U+1EBF (Vietnamese)
+    }
+
+    func testCombiningDiacriticsRange() {
+        // Combining Diacritical Marks (U+0300–U+036F) accepted as Latin so
+        // decomposed (NFD) sequences like "e" + U+0301 don't get rejected.
+        XCTAssertTrue(TokenLanguageFilter.matches("e\u{0301}", script: .latin))  // "e" + combining acute
+        XCTAssertTrue(TokenLanguageFilter.matches("a\u{0300}", script: .latin))  // "a" + combining grave
+        XCTAssertTrue(TokenLanguageFilter.matches("n\u{0303}", script: .latin))  // "n" + combining tilde (Spanish ñ NFD)
+        // And Cyrillic must still reject bare ASCII letter + combining mark.
+        XCTAssertFalse(TokenLanguageFilter.matches("e\u{0301}", script: .cyrillic))
     }
 
     func testCyrillicRange() {

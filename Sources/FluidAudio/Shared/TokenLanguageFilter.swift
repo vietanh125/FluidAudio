@@ -81,12 +81,16 @@ internal struct TokenLanguageFilter: Sendable {
     ///
     /// ## Allowed ranges
     ///
-    /// **Latin:** ASCII, Latin-1, Latin Extended-A/B, Latin Extended Additional.
-    /// Digits (0x30–0x39), ASCII punctuation, and whitespace fall inside ASCII and
-    /// are therefore allowed — treated as script-neutral. The Latin path does **not**
-    /// need an explicit "reject Cyrillic" guard because the Cyrillic block
-    /// (U+0400–U+04FF) does not overlap any Latin range; `allSatisfy` over the Latin
-    /// ranges already fails for any Cyrillic scalar.
+    /// **Latin:** ASCII, Latin-1, Latin Extended-A/B, Combining Diacritical Marks,
+    /// Latin Extended Additional. Combining marks (U+0300–U+036F) are included so
+    /// decomposed (NFD) forms like `"e" + U+0301` are not rejected — SentencePiece
+    /// vocabs usually emit precomposed characters, but handling both forms keeps
+    /// the filter robust across vocab export variants. Digits (0x30–0x39), ASCII
+    /// punctuation, and whitespace fall inside ASCII and are therefore allowed —
+    /// treated as script-neutral. The Latin path does **not** need an explicit
+    /// "reject Cyrillic" guard because the Cyrillic block (U+0400–U+04FF) does not
+    /// overlap any Latin range; `allSatisfy` over the Latin ranges already fails
+    /// for any Cyrillic scalar.
     ///
     /// **Cyrillic:** the Cyrillic block (U+0400–U+04FF) plus script-neutral ASCII
     /// (space, digits, punctuation) — but ASCII letters A–Z/a–z are explicitly
@@ -98,8 +102,10 @@ internal struct TokenLanguageFilter: Sendable {
         // no script information and would otherwise fail every range check.
         let cleanedText = text.replacingOccurrences(of: String(sentencePieceBoundary), with: "")
 
-        // Empty after stripping boundary markers means no actual content to check
-        guard !cleanedText.isEmpty else { return false }
+        // Token was pure boundary marker(s) — no script-bearing content. Treat as
+        // script-neutral so filterTopK's candidate scan doesn't unconditionally
+        // exclude it; the caller's argmax decides whether it wins on logit alone.
+        guard !cleanedText.isEmpty else { return true }
 
         let chars = cleanedText.unicodeScalars
         switch script {
@@ -111,6 +117,7 @@ internal struct TokenLanguageFilter: Sendable {
                     || ($0.value >= 0x00A0 && $0.value <= 0x00FF)  // Latin-1
                     || ($0.value >= 0x0100 && $0.value <= 0x017F)  // Latin Extended-A
                     || ($0.value >= 0x0180 && $0.value <= 0x024F)  // Latin Extended-B (Romanian ș ț, etc.)
+                    || ($0.value >= 0x0300 && $0.value <= 0x036F)  // Combining Diacritical Marks (NFD forms)
                     || ($0.value >= 0x1E00 && $0.value <= 0x1EFF)  // Latin Extended Additional (Vietnamese, etc.)
             }
         case .cyrillic:
@@ -176,6 +183,9 @@ internal struct TokenLanguageFilter: Sendable {
 
         // Argmax over in-script candidates. No assumption that CoreML returned
         // top-K in sorted order — scan all K and keep the highest-logit match.
+        // The "first match wins unconditionally" step (bestIdx < 0) is required
+        // so that a candidate with logit == -infinity still gets selected rather
+        // than sticking at the sentinel bestLogit = -infinity.
         var bestIdx: Int = -1
         var bestLogit: Float = -.infinity
         for idx in 0..<count {
@@ -184,34 +194,28 @@ internal struct TokenLanguageFilter: Sendable {
             guard matches(tokenText, script: preferredScript) else { continue }
 
             let logit = topKLogits[idx]
-            if logit > bestLogit {
+            if bestIdx < 0 || logit > bestLogit {
                 bestLogit = logit
                 bestIdx = idx
             }
         }
         guard bestIdx >= 0 else { return nil }
 
-        let probability = softmaxProbability(of: bestIdx, logits: topKLogits, count: count)
-        return (topKIds[bestIdx], probability)
-    }
-
-    /// Compute softmax probability of `index` within a slice of `logits` of length `count`.
-    /// Uses the max-logit stability trick to avoid overflow.
-    private static func softmaxProbability(of index: Int, logits: [Float], count: Int) -> Float {
+        // Top-K softmax (inlined). Uses the max-logit stability trick to avoid
+        // overflow; max is taken over the same top-K slice we ranked against.
         var maxLogit = -Float.infinity
-        for i in 0..<count where logits[i] > maxLogit {
-            maxLogit = logits[i]
+        for i in 0..<count where topKLogits[i] > maxLogit {
+            maxLogit = topKLogits[i]
         }
-        guard maxLogit.isFinite else { return 0 }
+        guard maxLogit.isFinite else { return (topKIds[bestIdx], 0) }
 
         var sumExp: Float = 0
         for i in 0..<count {
-            sumExp += expf(logits[i] - maxLogit)
+            sumExp += expf(topKLogits[i] - maxLogit)
         }
-        guard sumExp > 0 else { return 0 }
+        guard sumExp > 0 else { return (topKIds[bestIdx], 0) }
 
-        let numerator = expf(logits[index] - maxLogit)
-        let prob = numerator / sumExp
-        return max(0, min(1, prob))
+        let prob = expf(topKLogits[bestIdx] - maxLogit) / sumExp
+        return (topKIds[bestIdx], max(0, min(1, prob)))
     }
 }
