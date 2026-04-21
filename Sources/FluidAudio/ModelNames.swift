@@ -8,7 +8,9 @@ public enum Repo: String, CaseIterable, Sendable {
     case parakeetCtc110m = "FluidInference/parakeet-ctc-110m-coreml"
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
     case parakeetCtcZhCn = "FluidInference/parakeet-ctc-0.6b-zh-cn-coreml"
-    // Contains both CTC and TDT models (INT8 quantized encoder)
+    // Japanese hybrid TDT: INT8 CTC-trained preprocessor+encoder paired with a
+    // TDT decoder+joint. CTC-only inference for Japanese was removed in
+    // 846924a1d; only the preprocessor+encoder files from this repo are reused.
     case parakeetJa = "FluidInference/parakeet-0.6b-ja-coreml"
     case parakeetEou160 = "FluidInference/parakeet-realtime-eou-120m-coreml/160ms"
     case parakeetEou320 = "FluidInference/parakeet-realtime-eou-120m-coreml/320ms"
@@ -303,13 +305,18 @@ public enum ModelNames {
         ]
     }
 
-    /// TDT ja (Japanese) model names (hybrid model: CTC preprocessor/encoder + TDT decoder/joint v2)
-    /// NOTE: Uses parakeetJa repo where v2 models are uploaded
+    /// TDT ja (Japanese) model names.
+    ///
+    /// Hybrid layout: the CTC-trained preprocessor + encoder from the
+    /// `parakeetJa` repo are reused as the acoustic frontend, paired with a TDT
+    /// decoder + joint (filenames `Decoderv2.mlmodelc` / `Jointerv2.mlmodelc`
+    /// from the same repo). CTC-only inference for Japanese was removed in
+    /// 846924a1d.
     public enum TDTJa {
         public static let preprocessor = "Preprocessor"
         public static let encoder = "Encoder"
-        public static let decoder = "Decoderv2"  // v2: newly converted TDT decoder (uploaded to CTC repo)
-        public static let joint = "Jointerv2"  // v2: newly converted TDT joint (uploaded to CTC repo)
+        public static let decoder = "Decoderv2"
+        public static let joint = "Jointerv2"
 
         public static let preprocessorFile = preprocessor + ".mlmodelc"
         public static let encoderFile = encoder + ".mlmodelc"
