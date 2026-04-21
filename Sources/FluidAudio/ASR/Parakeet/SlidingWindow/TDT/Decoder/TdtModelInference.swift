@@ -223,7 +223,7 @@ internal struct TdtModelInference: Sendable {
                 outShape[2] == 1, outShape[1] == hiddenSize
             else {
                 throw ASRError.processingFailed(
-                    "Prepared decoder step shape mismatch: \(destination.shapeString)")
+                    "Prepared decoder step shape mismatch: \(outShape.map(String.init).joined(separator: "x"))")
             }
             out = destination
         } else {

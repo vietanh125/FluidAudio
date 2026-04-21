@@ -693,8 +693,3 @@ internal struct TdtDecoderV3: Sendable {
         return value
     }
 }
-
-extension MLMultiArray {
-    /// "BxTxH" style string. Used by `TdtModelInference` for shape-mismatch error messages.
-    var shapeString: String { shape.map { "\($0.intValue)" }.joined(separator: "x") }
-}

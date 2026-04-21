@@ -292,7 +292,7 @@ extension AsrModels {
             progressHandler: progressHandler
         )
 
-        guard let unwrappedJointModel = jointModels[fileNames.joint] else {
+        guard let jointModel = jointModels[fileNames.joint] else {
             let hint =
                 version == .v3
                 ? " (required for v3; delete the models directory to force a fresh download)"
@@ -345,7 +345,7 @@ extension AsrModels {
             encoder: encoderModel,
             preprocessor: preprocessorModel,
             decoder: decoderModel,
-            joint: unwrappedJointModel,
+            joint: jointModel,
             ctcHead: ctcHeadModel,
             configuration: config,
             vocabulary: try loadVocabulary(from: directory, version: version),
