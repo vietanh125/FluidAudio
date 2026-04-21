@@ -530,9 +530,21 @@ public class FLEURSBenchmark {
         return (results, allHighWERCases)
     }
 
-    /// Map FLEURS language code to FluidAudio Language enum for script filtering
+    /// Map a FLEURS language code to the Parakeet v3 script-filter `Language` enum.
+    ///
+    /// Scope: this mapping is specific to the **Parakeet v3 TDT** benchmark and the
+    /// script-filtering `Language` enum in `Sources/FluidAudio/Shared/TokenLanguageFilter.swift`.
+    /// That enum exists to suppress Latin↔Cyrillic leakage in v3's multilingual joint
+    /// decoder, so it only enumerates languages where confusables are a concern.
+    ///
+    /// FLEURS ships 102 languages; we intentionally return `nil` for anything outside
+    /// the v3 script-filter enum (either the language isn't covered by v3, or it uses
+    /// a script that doesn't need Latin/Cyrillic disambiguation — e.g. Arabic, CJK).
+    ///
+    /// Other ASR engines have their own language enums and their own FLEURS mappings:
+    /// see `Qwen3AsrBenchmark.fleursToQwen3Language` for the Qwen3 multilingual enum
+    /// (30 languages, including CJK / Arabic / Indic that Parakeet v3 doesn't cover).
     private func mapToLanguageEnum(_ fleursCode: String) -> Language? {
-        // Map FLEURS codes (e.g., "pl_pl") to Language enum (e.g., .polish)
         switch fleursCode {
         case "en_us": return .english
         case "pl_pl": return .polish
@@ -548,7 +560,7 @@ public class FLEURSBenchmark {
         case "ru_ru": return .russian
         case "uk_ua": return .ukrainian
         case "bg_bg": return .bulgarian
-        default: return nil  // Language not in our enum or doesn't need script filtering
+        default: return nil
         }
     }
 
