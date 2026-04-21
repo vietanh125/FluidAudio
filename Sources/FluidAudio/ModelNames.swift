@@ -8,7 +8,8 @@ public enum Repo: String, CaseIterable, Sendable {
     case parakeetCtc110m = "FluidInference/parakeet-ctc-110m-coreml"
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
     case parakeetCtcZhCn = "FluidInference/parakeet-ctc-0.6b-zh-cn-coreml"
-    case parakeetJa = "FluidInference/parakeet-0.6b-ja-coreml"  // Contains both CTC and TDT models (INT8 quantized encoder)
+    // Contains both CTC and TDT models (INT8 quantized encoder)
+    case parakeetJa = "FluidInference/parakeet-0.6b-ja-coreml"
     case parakeetEou160 = "FluidInference/parakeet-realtime-eou-120m-coreml/160ms"
     case parakeetEou320 = "FluidInference/parakeet-realtime-eou-120m-coreml/320ms"
     case parakeetEou1280 = "FluidInference/parakeet-realtime-eou-120m-coreml/1280ms"
@@ -224,6 +225,9 @@ public enum ModelNames {
         public static let encoderFile = encoder + ".mlmodelc"
         public static let decoderFile = decoder + ".mlmodelc"
         public static let jointFile = joint + ".mlmodelc"
+        /// Joint decoder variant for v3 that exposes top-K outputs
+        /// (`top_k_ids`, `top_k_logits`) used for language-aware script filtering.
+        public static let jointV3File = "JointDecisionv3.mlmodelc"
         public static let ctcHeadFile = ctcHead + ".mlmodelc"
 
         public static let requiredModels: Set<String> = [
@@ -231,6 +235,15 @@ public enum ModelNames {
             encoderFile,
             decoderFile,
             jointFile,
+        ]
+
+        /// Required models for v3 (adds JointDecisionv3 with top-K outputs for language filtering)
+        public static let requiredModelsV3: Set<String> = [
+            preprocessorFile,
+            encoderFile,
+            decoderFile,
+            jointFile,
+            jointV3File,
         ]
 
         /// Required models for fused frontend (110m hybrid: preprocessor contains encoder)
@@ -644,7 +657,9 @@ public enum ModelNames {
         switch repo {
         case .vad:
             return ModelNames.VAD.requiredModels
-        case .parakeet, .parakeetV2:
+        case .parakeet:
+            return ModelNames.ASR.requiredModelsV3
+        case .parakeetV2:
             return ModelNames.ASR.requiredModels
         case .parakeetTdtCtc110m:
             return ModelNames.ASR.requiredModelsFused

@@ -182,6 +182,8 @@ extension AsrModels {
         switch version {
         case .tdtJa:
             return ModelNames.TDTJa.requiredModels
+        case .v3:
+            return Names.requiredModelsV3
         default:
             return version.hasFusedEncoder ? Names.requiredModelsFused : Names.requiredModels
         }
@@ -265,26 +267,33 @@ extension AsrModels {
             throw AsrModelsError.loadingFailed("Failed to load decoder model")
         }
 
-        // For v3, try JointDecisionv3 first (with top-K outputs for script filtering),
-        // fall back to standard JointDecision if not found.
-        let jointV3FileName = "JointDecisionv3.mlmodelc"
-        let repoDir = repoPath(from: directory, version: version)
-        let jointV3Path = repoDir.appendingPathComponent(jointV3FileName)
-
+        // For v3, prefer JointDecisionv3 (with top-K outputs for language-aware script
+        // filtering). Download it if missing; fall back to standard JointDecision only if
+        // the v3 variant cannot be fetched or loaded.
         var jointModel: MLModel?
 
-        if version == .v3 && FileManager.default.fileExists(atPath: jointV3Path.path) {
-            let jointConfig = MLModelConfiguration()
-            jointConfig.computeUnits = config.computeUnits
-            jointModel = try? MLModel(contentsOf: jointV3Path, configuration: jointConfig)
-            if jointModel != nil {
-                logger.info("Loaded JointDecisionv3 (with top-K outputs)")
-            } else {
-                logger.warning("JointDecisionv3 found but failed to load, falling back to JointDecision")
+        if version == .v3 {
+            do {
+                let jointV3Models = try await DownloadUtils.loadModels(
+                    version.repo,
+                    modelNames: [Names.jointV3File],
+                    directory: parentDirectory,
+                    computeUnits: config.computeUnits,
+                    progressHandler: progressHandler
+                )
+                if let loaded = jointV3Models[Names.jointV3File] {
+                    jointModel = loaded
+                    logger.info("Loaded \(Names.jointV3File) (with top-K outputs)")
+                }
+            } catch {
+                logger.warning(
+                    "Failed to download \(Names.jointV3File): \(error.localizedDescription). "
+                        + "Falling back to \(fileNames.joint); language-aware script filtering will be inactive."
+                )
             }
         }
 
-        // Fall back to version-specific JointDecision if v3 not found or failed to load
+        // Fall back to version-specific JointDecision if v3 not available
         if jointModel == nil {
             let jointModels = try await DownloadUtils.loadModels(
                 version.repo,
@@ -298,7 +307,7 @@ extension AsrModels {
                 throw AsrModelsError.loadingFailed("Failed to load joint model")
             }
             jointModel = fallbackJoint
-            logger.info("Loaded JointDecision (standard, no top-K)")
+            logger.info("Loaded \(fileNames.joint) (standard, no top-K)")
         }
 
         guard let unwrappedJointModel = jointModel else {
