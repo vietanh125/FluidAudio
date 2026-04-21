@@ -15,7 +15,7 @@ public enum AsrModelVersion: Sendable {
     var repo: Repo {
         switch self {
         case .v2: return .parakeetV2
-        case .v3: return .parakeet
+        case .v3: return .parakeetV3
         case .tdtCtc110m: return .parakeetTdtCtc110m
         case .ctcZhCn: return .parakeetCtcZhCn
         case .tdtJa: return .parakeetJa

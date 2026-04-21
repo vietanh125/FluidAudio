@@ -3,7 +3,7 @@ import Foundation
 /// Model repositories on HuggingFace
 public enum Repo: String, CaseIterable, Sendable {
     case vad = "FluidInference/silero-vad-coreml"
-    case parakeet = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
+    case parakeetV3 = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
     case parakeetV2 = "FluidInference/parakeet-tdt-0.6b-v2-coreml"
     case parakeetCtc110m = "FluidInference/parakeet-ctc-110m-coreml"
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
@@ -34,7 +34,7 @@ public enum Repo: String, CaseIterable, Sendable {
         switch self {
         case .vad:
             return "silero-vad-coreml"
-        case .parakeet:
+        case .parakeetV3:
             return "parakeet-tdt-0.6b-v3-coreml"
         case .parakeetV2:
             return "parakeet-tdt-0.6b-v2-coreml"
@@ -666,7 +666,7 @@ public enum ModelNames {
         switch repo {
         case .vad:
             return ModelNames.VAD.requiredModels
-        case .parakeet:
+        case .parakeetV3:
             return ModelNames.ASR.requiredModelsV3
         case .parakeetV2:
             return ModelNames.ASR.requiredModels
