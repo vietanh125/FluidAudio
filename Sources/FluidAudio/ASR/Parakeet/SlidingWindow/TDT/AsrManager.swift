@@ -324,10 +324,9 @@ public actor AsrManager {
     /// - Parameters:
     ///   - audioBuffer: The audio buffer to transcribe
     ///   - decoderState: The TDT decoder state to use and update during transcription
-    ///   - language: Optional language hint for script-aware token filtering (v3 only,
-    ///     requires `JointDecisionv3.mlmodelc`). When set, top-K tokens that don't
-    ///     match the language's script are skipped in favor of matching candidates.
-    ///     Silently ignored for v2 / tdtCtc110m / tdtJa models.
+    ///   - language: Optional language hint for script-aware token filtering (v3 only).
+    ///     When set, top-K tokens that don't match the language's script are skipped
+    ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails or models are not initialized
     public func transcribe(
@@ -349,10 +348,9 @@ public actor AsrManager {
     /// - Parameters:
     ///   - url: The URL to the audio file
     ///   - decoderState: The TDT decoder state to use and update during transcription
-    ///   - language: Optional language hint for script-aware token filtering (v3 only,
-    ///     requires `JointDecisionv3.mlmodelc`). When set, top-K tokens that don't
-    ///     match the language's script are skipped in favor of matching candidates.
-    ///     Silently ignored for v2 / tdtCtc110m / tdtJa models.
+    ///   - language: Optional language hint for script-aware token filtering (v3 only).
+    ///     When set, top-K tokens that don't match the language's script are skipped
+    ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
     public func transcribe(
@@ -383,10 +381,9 @@ public actor AsrManager {
     /// - Parameters:
     ///   - url: The URL to the audio file
     ///   - decoderState: The TDT decoder state to use and update during transcription
-    ///   - language: Optional language hint for script-aware token filtering (v3 only,
-    ///     requires `JointDecisionv3.mlmodelc`). When set, top-K tokens that don't
-    ///     match the language's script are skipped in favor of matching candidates.
-    ///     Silently ignored for v2 / tdtCtc110m / tdtJa models.
+    ///   - language: Optional language hint for script-aware token filtering (v3 only).
+    ///     When set, top-K tokens that don't match the language's script are skipped
+    ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
     public func transcribeDiskBacked(
@@ -450,10 +447,9 @@ public actor AsrManager {
     /// - Parameters:
     ///   - audioSamples: Array of 16-bit audio samples at 16kHz
     ///   - decoderState: The TDT decoder state to use and update during transcription
-    ///   - language: Optional language hint for script-aware token filtering (v3 only,
-    ///     requires `JointDecisionv3.mlmodelc`). When set, top-K tokens that don't
-    ///     match the language's script are skipped in favor of matching candidates.
-    ///     Silently ignored for v2 / tdtCtc110m / tdtJa models.
+    ///   - language: Optional language hint for script-aware token filtering (v3 only).
+    ///     When set, top-K tokens that don't match the language's script are skipped
+    ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
     /// - Note: Progress stream is emitted only when `audioSamples.count > ASRConstants.maxModelSamples` (~15s).
     ///         Use `transcriptionProgressStream` before calling this method to observe progress.
     /// - Returns: An ASRResult containing the transcribed text and token timings

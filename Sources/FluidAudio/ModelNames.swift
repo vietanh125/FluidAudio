@@ -230,6 +230,8 @@ public enum ModelNames {
         public static let jointV3File = "JointDecisionv3.mlmodelc"
         public static let ctcHeadFile = ctcHead + ".mlmodelc"
 
+        /// Required models for v2 / legacy split-frontend loaders.
+        /// v3 uses `requiredModelsV3` (with `jointV3File`).
         public static let requiredModels: Set<String> = [
             preprocessorFile,
             encoderFile,
@@ -237,11 +239,14 @@ public enum ModelNames {
             jointFile,
         ]
 
-        // Note: jointV3File is optional for v3 — AsrModels.loadInternal downloads it
-        // opportunistically and falls back to jointFile if unavailable. It is therefore
-        // intentionally NOT part of requiredModels, so cache-existence checks don't
-        // trigger re-downloads when the v3 variant is missing from HuggingFace.
-        // The mirror comment lives on `AsrModels.getRequiredModels(version:)`.
+        /// Required models for v3. v3 always uses `JointDecisionv3.mlmodelc`
+        /// (with top-K outputs for language-aware script filtering).
+        public static let requiredModelsV3: Set<String> = [
+            preprocessorFile,
+            encoderFile,
+            decoderFile,
+            jointV3File,
+        ]
 
         /// Required models for fused frontend (110m hybrid: preprocessor contains encoder)
         public static let requiredModelsFused: Set<String> = [
@@ -654,7 +659,9 @@ public enum ModelNames {
         switch repo {
         case .vad:
             return ModelNames.VAD.requiredModels
-        case .parakeet, .parakeetV2:
+        case .parakeet:
+            return ModelNames.ASR.requiredModelsV3
+        case .parakeetV2:
             return ModelNames.ASR.requiredModels
         case .parakeetTdtCtc110m:
             return ModelNames.ASR.requiredModelsFused

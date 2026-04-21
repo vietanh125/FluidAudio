@@ -168,6 +168,15 @@ extension AsrModels {
                 joint: ModelNames.TDTJa.jointFile,
                 vocabulary: ModelNames.TDTJa.vocabularyFile
             )
+        case .v3:
+            // v3 uses JointDecisionv3 exclusively (top-K outputs are required
+            // for language-aware script filtering, and are zero-cost when the
+            // feature is disabled).
+            return (
+                decoder: Names.decoderFile,
+                joint: Names.jointV3File,
+                vocabulary: Names.vocabularyFile
+            )
         default:
             return (
                 decoder: Names.decoderFile,
@@ -178,17 +187,12 @@ extension AsrModels {
     }
 
     /// Get version-specific required models set
-    ///
-    /// Note: for v3, `JointDecisionv3.mlmodelc` is intentionally omitted. It is
-    /// downloaded opportunistically in `loadInternal` with fallback to the
-    /// standard `JointDecision`, so marking it required would cause
-    /// `modelsExist` to return false (and trigger a full re-download) whenever
-    /// the v3 variant is missing from HuggingFace. The mirror comment lives in
-    /// `ModelNames.Parakeet` next to `jointV3File` / `requiredModels`.
     private static func getRequiredModels(version: AsrModelVersion) -> Set<String> {
         switch version {
         case .tdtJa:
             return ModelNames.TDTJa.requiredModels
+        case .v3:
+            return Names.requiredModelsV3
         default:
             return version.hasFusedEncoder ? Names.requiredModelsFused : Names.requiredModels
         }
@@ -272,52 +276,21 @@ extension AsrModels {
             throw AsrModelsError.loadingFailed("Failed to load decoder model")
         }
 
-        // For v3, prefer JointDecisionv3 (with top-K outputs for language-aware script
-        // filtering). Download it if missing; fall back to standard JointDecision only if
-        // the v3 variant cannot be fetched or loaded.
-        var jointModel: MLModel?
+        // Load the joint model. For v3 this is JointDecisionv3.mlmodelc (with
+        // top-K outputs); for v2 / 110m / tdtJa it is the version-specific
+        // JointDecision.mlmodelc.
+        let jointModels = try await DownloadUtils.loadModels(
+            version.repo,
+            modelNames: [fileNames.joint],
+            directory: parentDirectory,
+            computeUnits: config.computeUnits,
+            progressHandler: progressHandler
+        )
 
-        if version == .v3 {
-            do {
-                let jointV3Models = try await DownloadUtils.loadModels(
-                    version.repo,
-                    modelNames: [Names.jointV3File],
-                    directory: parentDirectory,
-                    computeUnits: config.computeUnits,
-                    progressHandler: progressHandler
-                )
-                if let loaded = jointV3Models[Names.jointV3File] {
-                    jointModel = loaded
-                    logger.info("Loaded \(Names.jointV3File) (with top-K outputs)")
-                }
-            } catch {
-                logger.warning(
-                    "Failed to download \(Names.jointV3File): \(error.localizedDescription). "
-                        + "Falling back to \(fileNames.joint); language-aware script filtering will be inactive."
-                )
-            }
+        guard let unwrappedJointModel = jointModels[fileNames.joint] else {
+            throw AsrModelsError.loadingFailed("Failed to load joint model \(fileNames.joint)")
         }
-
-        // Fall back to version-specific JointDecision if v3 not available
-        if jointModel == nil {
-            let jointModels = try await DownloadUtils.loadModels(
-                version.repo,
-                modelNames: [fileNames.joint],
-                directory: parentDirectory,
-                computeUnits: config.computeUnits,
-                progressHandler: progressHandler
-            )
-
-            guard let fallbackJoint = jointModels[fileNames.joint] else {
-                throw AsrModelsError.loadingFailed("Failed to load joint model")
-            }
-            jointModel = fallbackJoint
-            logger.info("Loaded \(fileNames.joint) (standard, no top-K)")
-        }
-
-        guard let unwrappedJointModel = jointModel else {
-            throw AsrModelsError.loadingFailed("Joint model is nil after loading attempts")
-        }
+        logger.info("Loaded \(fileNames.joint)")
 
         // [Beta] Optionally load CTC head model for custom vocabulary.
         // Supports two paths:
