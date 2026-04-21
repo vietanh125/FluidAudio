@@ -237,7 +237,7 @@ internal struct TdtDecoderV3: Sendable {
 
             let blankId = config.tdtConfig.blankId  // 8192 for v3 models
 
-            Self.applyTokenLanguageFilter(
+            Self.tokenLanguageFilter(
                 label: &label,
                 score: &score,
                 topKIds: decision.topKIds,
@@ -317,7 +317,7 @@ internal struct TdtDecoderV3: Sendable {
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
 
-                Self.applyTokenLanguageFilter(
+                Self.tokenLanguageFilter(
                     label: &label,
                     score: &score,
                     topKIds: innerDecision.topKIds,
@@ -557,22 +557,14 @@ internal struct TdtDecoderV3: Sendable {
 
     // MARK: - Private Helper Methods
 
-    /// If `label` is a non-blank token whose text does not match the target
-    /// script, replace it with the highest-logit in-script candidate from the
-    /// top-K outputs (and update `score` to the corresponding top-K softmax
-    /// probability). No-op when language/vocab/top-K data is absent, when the
-    /// predicted label is already in-script, or when no in-script candidate
-    /// exists in the top-K.
+    /// Replace `label`/`score` with the best in-script top-K candidate when the
+    /// joint's top-1 token is out-of-script for `language`. No-op when inputs
+    /// are missing or the prediction is already in-script.
     ///
-    /// Blank tokens are deliberately excluded: they represent silence and must
-    /// not be replaced via top-K (doing so would hallucinate speech). Some
-    /// vocabularies also map blankId to an empty string, which would otherwise
-    /// fall through the `!matches(...)` guard below.
-    ///
-    /// The probability returned by `filterTopK` is already clamped to [0, 1];
-    /// the extra `clampProbability` call is a defensive pass-through consistent
-    /// with how the top-1 path treats the joint output.
-    private static func applyTokenLanguageFilter(
+    /// Blanks are excluded from replacement — substituting silence via top-K
+    /// would hallucinate speech, and some vocabs map blankId to an empty string
+    /// which would otherwise slip through the `!matches(...)` guard.
+    private static func tokenLanguageFilter(
         label: inout Int,
         score: inout Float,
         topKIds: [Int]?,

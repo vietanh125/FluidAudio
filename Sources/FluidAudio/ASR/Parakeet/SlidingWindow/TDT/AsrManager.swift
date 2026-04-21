@@ -270,7 +270,7 @@ public actor AsrManager {
                 globalFrameOffset: globalFrameOffset
             )
         case .v3:
-            // Pass `vocabulary` unconditionally. `TdtDecoderV3.applyTokenLanguageFilter`
+            // Pass `vocabulary` unconditionally. `TdtDecoderV3.tokenLanguageFilter`
             // short-circuits when `language` is nil, so there's no cost to
             // forwarding vocab in the default path.
             let decoder = TdtDecoderV3(config: adaptedConfig)
