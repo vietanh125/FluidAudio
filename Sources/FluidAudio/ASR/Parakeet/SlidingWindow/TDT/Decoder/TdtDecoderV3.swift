@@ -244,8 +244,8 @@ internal struct TdtDecoderV3: Sendable {
                 let topKLogits = decision.topKLogits,
                 !topKIds.isEmpty,
                 let tokenText = vocab[label],
-                !ScriptDetection.matches(tokenText, script: language.script),
-                let filtered = ScriptDetection.filterTopK(
+                !TokenLanguageFilter.matches(tokenText, script: language.script),
+                let filtered = TokenLanguageFilter.filterTopK(
                     topKIds: topKIds,
                     topKLogits: topKLogits,
                     vocabulary: vocab,
@@ -338,8 +338,8 @@ internal struct TdtDecoderV3: Sendable {
                     let topKLogits = innerDecision.topKLogits,
                     !topKIds.isEmpty,
                     let tokenText = vocab[label],
-                    !ScriptDetection.matches(tokenText, script: language.script),
-                    let filtered = ScriptDetection.filterTopK(
+                    !TokenLanguageFilter.matches(tokenText, script: language.script),
+                    let filtered = TokenLanguageFilter.filterTopK(
                         topKIds: topKIds,
                         topKLogits: topKLogits,
                         vocabulary: vocab,

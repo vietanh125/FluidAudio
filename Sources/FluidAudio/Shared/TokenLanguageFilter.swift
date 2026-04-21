@@ -44,8 +44,15 @@ public enum Script: Sendable {
     case cyrillic
 }
 
-/// Script detection utilities for token filtering
-public struct ScriptDetection: Sendable {
+/// Filters ASR decoder tokens against a target language's writing script.
+///
+/// Used by the v3 TDT decoder to suppress cross-script leakage (e.g. Parakeet
+/// emitting Cyrillic tokens for a short Polish utterance) by walking the CoreML
+/// joint decoder's top-K output and picking the highest-ranked candidate whose
+/// text is in the expected script. Currently partitions by Unicode script only;
+/// per-language token allowlists (e.g. distinguishing Polish from Czech) could
+/// plug in here later without changing the call-site API.
+public struct TokenLanguageFilter: Sendable {
 
     /// Check if text matches a specific script
     ///

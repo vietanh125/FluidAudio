@@ -1,7 +1,7 @@
 import XCTest
 @testable import FluidAudio
 
-final class ScriptDetectionTests: XCTestCase {
+final class TokenLanguageFilterTests: XCTestCase {
 
     // MARK: - Script Property Tests
 
@@ -33,78 +33,78 @@ final class ScriptDetectionTests: XCTestCase {
     // MARK: - Basic Script Matching Tests
 
     func testMatchesLatinText() {
-        XCTAssertTrue(ScriptDetection.matches("hello", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("world", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("Hello World!", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("123 abc", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("hello", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("world", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("Hello World!", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("123 abc", script: .latin))
     }
 
     func testMatchesCyrillicText() {
-        XCTAssertTrue(ScriptDetection.matches("привет", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("мир", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("Привет мир!", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("123 абв", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("привет", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("мир", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("Привет мир!", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("123 абв", script: .cyrillic))
     }
 
     func testDoesNotMatchMixedScripts() {
-        XCTAssertFalse(ScriptDetection.matches("hello мир", script: .latin))
-        XCTAssertFalse(ScriptDetection.matches("hello мир", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("привет world", script: .latin))
-        XCTAssertFalse(ScriptDetection.matches("привет world", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("hello мир", script: .latin))
+        XCTAssertFalse(TokenLanguageFilter.matches("hello мир", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("привет world", script: .latin))
+        XCTAssertFalse(TokenLanguageFilter.matches("привет world", script: .cyrillic))
     }
 
     // MARK: - SentencePiece Boundary Marker Tests
 
     func testStripsSentencePieceBoundaryMarker() {
         // U+2581 (LOWER ONE EIGHTH BLOCK) is SentencePiece word boundary marker
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}hello", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}world", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}привет", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}мир", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}hello", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}world", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}привет", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}мир", script: .cyrillic))
     }
 
     func testMultipleBoundaryMarkers() {
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}\u{2581}hello", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}\u{2581}привет", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}\u{2581}hello", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}\u{2581}привет", script: .cyrillic))
     }
 
     func testBoundaryMarkerOnly() {
         // Boundary marker alone should return false (empty after stripping)
-        XCTAssertFalse(ScriptDetection.matches("\u{2581}", script: .latin))
-        XCTAssertFalse(ScriptDetection.matches("\u{2581}", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("\u{2581}\u{2581}", script: .latin))
+        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}", script: .latin))
+        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("\u{2581}\u{2581}", script: .latin))
     }
 
     // MARK: - Polish Language Tests (Issue #512)
 
     func testPolishLatinCharacters() {
         // Polish uses Latin Extended-A for special characters
-        XCTAssertTrue(ScriptDetection.matches("ą", script: .latin))  // U+0105
-        XCTAssertTrue(ScriptDetection.matches("ć", script: .latin))  // U+0107
-        XCTAssertTrue(ScriptDetection.matches("ę", script: .latin))  // U+0119
-        XCTAssertTrue(ScriptDetection.matches("ł", script: .latin))  // U+0142
-        XCTAssertTrue(ScriptDetection.matches("ń", script: .latin))  // U+0144
-        XCTAssertTrue(ScriptDetection.matches("ó", script: .latin))  // U+00F3
-        XCTAssertTrue(ScriptDetection.matches("ś", script: .latin))  // U+015B
-        XCTAssertTrue(ScriptDetection.matches("ź", script: .latin))  // U+017A
-        XCTAssertTrue(ScriptDetection.matches("ż", script: .latin))  // U+017C
+        XCTAssertTrue(TokenLanguageFilter.matches("ą", script: .latin))  // U+0105
+        XCTAssertTrue(TokenLanguageFilter.matches("ć", script: .latin))  // U+0107
+        XCTAssertTrue(TokenLanguageFilter.matches("ę", script: .latin))  // U+0119
+        XCTAssertTrue(TokenLanguageFilter.matches("ł", script: .latin))  // U+0142
+        XCTAssertTrue(TokenLanguageFilter.matches("ń", script: .latin))  // U+0144
+        XCTAssertTrue(TokenLanguageFilter.matches("ó", script: .latin))  // U+00F3
+        XCTAssertTrue(TokenLanguageFilter.matches("ś", script: .latin))  // U+015B
+        XCTAssertTrue(TokenLanguageFilter.matches("ź", script: .latin))  // U+017A
+        XCTAssertTrue(TokenLanguageFilter.matches("ż", script: .latin))  // U+017C
     }
 
     func testPolishWords() {
-        XCTAssertTrue(ScriptDetection.matches("cześć", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("świat", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("Polska", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("zażółć", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("cześć", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("świat", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("Polska", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("zażółć", script: .latin))
     }
 
     func testPolishWordsWithBoundaryMarker() {
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}cześć", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("\u{2581}świat", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}cześć", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("\u{2581}świat", script: .latin))
     }
 
     func testRejectsPolishTextAsCyrillic() {
-        XCTAssertFalse(ScriptDetection.matches("cześć", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("świat", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("cześć", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("świat", script: .cyrillic))
     }
 
     // MARK: - Other Latin-Script Slavic Language Tests
@@ -113,7 +113,7 @@ final class ScriptDetectionTests: XCTestCase {
         // Czech: á č ď é ě í ň ó ř š ť ú ů ý ž — all Latin Extended-A
         for token in ["Příliš", "žluťoučký", "kůň", "ďábelské", "ódy"] {
             XCTAssertTrue(
-                ScriptDetection.matches(token, script: .latin),
+                TokenLanguageFilter.matches(token, script: .latin),
                 "Czech token '\(token)' should match Latin")
         }
     }
@@ -122,7 +122,7 @@ final class ScriptDetectionTests: XCTestCase {
         // Slovak adds ĺ ľ ŕ ô — all Latin Extended-A
         for token in ["Kŕdeľ", "šťastných", "ďatľov", "mĺkveho", "ústí", "koňa"] {
             XCTAssertTrue(
-                ScriptDetection.matches(token, script: .latin),
+                TokenLanguageFilter.matches(token, script: .latin),
                 "Slovak token '\(token)' should match Latin")
         }
     }
@@ -130,11 +130,11 @@ final class ScriptDetectionTests: XCTestCase {
     func testSlovenianAndCroatianDiacritics() {
         // Slovenian: č š ž
         for token in ["Češnja", "sočna"] {
-            XCTAssertTrue(ScriptDetection.matches(token, script: .latin))
+            XCTAssertTrue(TokenLanguageFilter.matches(token, script: .latin))
         }
         // Croatian: č ć đ š ž
         for token in ["Džemper", "čokolada", "svježe"] {
-            XCTAssertTrue(ScriptDetection.matches(token, script: .latin))
+            XCTAssertTrue(TokenLanguageFilter.matches(token, script: .latin))
         }
     }
 
@@ -142,62 +142,62 @@ final class ScriptDetectionTests: XCTestCase {
         // Romanian: ă â î ș ț — ș (U+0219) and ț (U+021B) are in Latin Extended-B
         for token in ["Înșelător", "mâine", "scrisoare", "ți-a"] {
             XCTAssertTrue(
-                ScriptDetection.matches(token, script: .latin),
+                TokenLanguageFilter.matches(token, script: .latin),
                 "Romanian token '\(token)' should match Latin")
         }
     }
 
     func testSlavicLatinLanguagesRejectedAsCyrillic() {
         // These should never be classified as Cyrillic
-        XCTAssertFalse(ScriptDetection.matches("Příliš", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("žluťoučký", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("Kŕdeľ", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("Džemper", script: .cyrillic))
-        XCTAssertFalse(ScriptDetection.matches("Înșelător", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("Příliš", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("žluťoučký", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("Kŕdeľ", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("Džemper", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("Înșelător", script: .cyrillic))
     }
 
     // MARK: - Punctuation and Special Characters
 
     func testPunctuationWithLatin() {
-        XCTAssertTrue(ScriptDetection.matches("hello!", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("world?", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("test.", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("hello, world!", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("hello!", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("world?", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("test.", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("hello, world!", script: .latin))
     }
 
     func testPunctuationWithCyrillic() {
-        XCTAssertTrue(ScriptDetection.matches("привет!", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("мир?", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("тест.", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("привет, мир!", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("привет!", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("мир?", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("тест.", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("привет, мир!", script: .cyrillic))
     }
 
     func testSpacesAndWhitespace() {
-        XCTAssertTrue(ScriptDetection.matches("hello world", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("  hello  ", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("привет мир", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("  привет  ", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("hello world", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("  hello  ", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("привет мир", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("  привет  ", script: .cyrillic))
     }
 
     // MARK: - Edge Cases
 
     func testEmptyString() {
-        XCTAssertFalse(ScriptDetection.matches("", script: .latin))
-        XCTAssertFalse(ScriptDetection.matches("", script: .cyrillic))
+        XCTAssertFalse(TokenLanguageFilter.matches("", script: .latin))
+        XCTAssertFalse(TokenLanguageFilter.matches("", script: .cyrillic))
     }
 
     func testWhitespaceOnly() {
-        XCTAssertTrue(ScriptDetection.matches(" ", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("   ", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches(" ", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("   ", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches(" ", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("   ", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches(" ", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("   ", script: .cyrillic))
     }
 
     func testNumbers() {
-        XCTAssertTrue(ScriptDetection.matches("123", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("123", script: .cyrillic))
-        XCTAssertTrue(ScriptDetection.matches("456 789", script: .latin))
-        XCTAssertTrue(ScriptDetection.matches("456 789", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("123", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("123", script: .cyrillic))
+        XCTAssertTrue(TokenLanguageFilter.matches("456 789", script: .latin))
+        XCTAssertTrue(TokenLanguageFilter.matches("456 789", script: .cyrillic))
     }
 
     // MARK: - Filter Top-K Tests
@@ -213,7 +213,7 @@ final class ScriptDetectionTests: XCTestCase {
         ]
 
         // Should return first Latin match (ID=2, "hello")
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -239,7 +239,7 @@ final class ScriptDetectionTests: XCTestCase {
             3: "\u{2581}мир",  // Cyrillic with boundary marker
         ]
 
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -266,7 +266,7 @@ final class ScriptDetectionTests: XCTestCase {
         ]
 
         // All tokens are Cyrillic, should return nil for Latin
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -287,7 +287,7 @@ final class ScriptDetectionTests: XCTestCase {
         ]
 
         // Should skip missing ID=2 and return ID=4 ("world")
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -305,7 +305,7 @@ final class ScriptDetectionTests: XCTestCase {
     }
 
     func testFilterTopKEmptyArrays() {
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: [],
             topKLogits: [],
             vocabulary: [:],
@@ -326,7 +326,7 @@ final class ScriptDetectionTests: XCTestCase {
             3: "world",  // Latin (but out of logits range)
         ]
 
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -350,7 +350,7 @@ final class ScriptDetectionTests: XCTestCase {
             5: "foo",
         ]
 
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -374,7 +374,7 @@ final class ScriptDetectionTests: XCTestCase {
             3: "\u{2581}прі",  // Cyrillic
         ]
 
-        let result = ScriptDetection.filterTopK(
+        let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
             vocabulary: vocabulary,
@@ -421,29 +421,29 @@ final class ScriptDetectionTests: XCTestCase {
 
     func testLatinExtendedARange() {
         // Test characters in Latin Extended-A (U+0100 to U+017F)
-        XCTAssertTrue(ScriptDetection.matches("Ā", script: .latin))  // U+0100
-        XCTAssertTrue(ScriptDetection.matches("ž", script: .latin))  // U+017E
-        XCTAssertTrue(ScriptDetection.matches("ſ", script: .latin))  // U+017F
+        XCTAssertTrue(TokenLanguageFilter.matches("Ā", script: .latin))  // U+0100
+        XCTAssertTrue(TokenLanguageFilter.matches("ž", script: .latin))  // U+017E
+        XCTAssertTrue(TokenLanguageFilter.matches("ſ", script: .latin))  // U+017F
     }
 
     func testLatinExtendedBRange() {
         // Test characters in Latin Extended-B (U+0180 to U+024F)
-        XCTAssertTrue(ScriptDetection.matches("ƀ", script: .latin))  // U+0180
-        XCTAssertTrue(ScriptDetection.matches("ș", script: .latin))  // U+0219 (Romanian)
-        XCTAssertTrue(ScriptDetection.matches("ț", script: .latin))  // U+021B (Romanian)
-        XCTAssertTrue(ScriptDetection.matches("ɏ", script: .latin))  // U+024F
+        XCTAssertTrue(TokenLanguageFilter.matches("ƀ", script: .latin))  // U+0180
+        XCTAssertTrue(TokenLanguageFilter.matches("ș", script: .latin))  // U+0219 (Romanian)
+        XCTAssertTrue(TokenLanguageFilter.matches("ț", script: .latin))  // U+021B (Romanian)
+        XCTAssertTrue(TokenLanguageFilter.matches("ɏ", script: .latin))  // U+024F
     }
 
     func testLatinExtendedAdditionalRange() {
         // Test characters in Latin Extended Additional (U+1E00 to U+1EFF)
-        XCTAssertTrue(ScriptDetection.matches("Ḁ", script: .latin))  // U+1E00
-        XCTAssertTrue(ScriptDetection.matches("ế", script: .latin))  // U+1EBF (Vietnamese)
+        XCTAssertTrue(TokenLanguageFilter.matches("Ḁ", script: .latin))  // U+1E00
+        XCTAssertTrue(TokenLanguageFilter.matches("ế", script: .latin))  // U+1EBF (Vietnamese)
     }
 
     func testCyrillicRange() {
         // Test characters in Cyrillic (U+0400 to U+04FF)
-        XCTAssertTrue(ScriptDetection.matches("Ѐ", script: .cyrillic))  // U+0400
-        XCTAssertTrue(ScriptDetection.matches("ӿ", script: .cyrillic))  // U+04FF
-        XCTAssertTrue(ScriptDetection.matches("Ӏ", script: .cyrillic))  // U+04C0
+        XCTAssertTrue(TokenLanguageFilter.matches("Ѐ", script: .cyrillic))  // U+0400
+        XCTAssertTrue(TokenLanguageFilter.matches("ӿ", script: .cyrillic))  // U+04FF
+        XCTAssertTrue(TokenLanguageFilter.matches("Ӏ", script: .cyrillic))  // U+04C0
     }
 }

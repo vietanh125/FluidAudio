@@ -52,7 +52,7 @@ Script filtering implementation is **functionally correct** but shows **no measu
 1. ✅ Language parameter threaded through ChunkProcessor
 2. ✅ SentencePiece boundary marker (▁) handling
 3. ✅ Token confidence updated after filtering
-4. ✅ 28 unit tests added (ScriptDetectionTests.swift)
+4. ✅ 28 unit tests added (TokenLanguageFilterTests.swift)
 
 ✅ **Critical bug fixed:**
 - Only filter when top-1 token doesn't match preferred script
@@ -70,15 +70,15 @@ Script filtering implementation is **functionally correct** but shows **no measu
 **Script filtering logic:**
 ```swift
 // Only filter if top-1 token doesn't match preferred script
-if !ScriptDetection.matches(tokenText, script: language.script) {
-    if let filtered = ScriptDetection.filterTopK(
+if !TokenLanguageFilter.matches(tokenText, script: language.script) {
+    if let filtered = TokenLanguageFilter.filterTopK(
         topKIds: topKIds,
         topKLogits: topKLogits,
         vocabulary: vocab,
         preferredScript: language.script
     ) {
         label = filtered.tokenId
-        score = TdtDurationMapping.clampProbability(filtered.logit)
+        score = TdtDurationMapping.clampProbability(filtered.probability)
     }
 }
 ```
