@@ -540,6 +540,11 @@ public class FLEURSBenchmark {
         case "fr_fr": return .french
         case "de_de": return .german
         case "it_it": return .italian
+        case "ro_ro": return .romanian
+        case "cs_cz": return .czech
+        case "sk_sk": return .slovak
+        case "hr_hr": return .croatian
+        case "sl_si": return .slovenian
         case "ru_ru": return .russian
         case "uk_ua": return .ukrainian
         case "bg_bg": return .bulgarian
