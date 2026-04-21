@@ -217,7 +217,7 @@ final class TokenLanguageFilterTests: XCTestCase {
             4: "world",  // Latin
         ]
 
-        // Highest-logit in-script (Latin) candidate is ID=2 ("hello") at logit 0.7
+        // Highest-logit right-language (Latin) candidate is ID=2 ("hello") at logit 0.7
         let result = TokenLanguageFilter.filterTopK(
             topKIds: topKIds,
             topKLogits: topKLogits,
@@ -245,7 +245,7 @@ final class TokenLanguageFilterTests: XCTestCase {
             1: "привет",  // Cyrillic
             2: "hi",  // Latin (first match, but NOT highest logit)
             3: "мир",  // Cyrillic
-            4: "world",  // Latin (highest-logit in-script candidate)
+            4: "world",  // Latin (highest-logit right-language candidate)
         ]
 
         let result = TokenLanguageFilter.filterTopK(
@@ -334,7 +334,7 @@ final class TokenLanguageFilterTests: XCTestCase {
     }
 
     func testFilterTopKPicksNegativeInfinityLogit() {
-        // Edge case: if the only in-script candidate has logit == -infinity,
+        // Edge case: if the only right-language candidate has logit == -infinity,
         // the earlier `logit > bestLogit` check (bestLogit seeded at -infinity)
         // incorrectly returned nil. The "first match wins unconditionally"
         // branch ensures we pick it.

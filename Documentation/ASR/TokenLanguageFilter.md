@@ -3,12 +3,12 @@
 ## Overview
 
 Parakeet TDT v3 is a multilingual model with a single shared SentencePiece
-vocabulary spanning Latin and Cyrillic scripts. On short utterances with
-ambiguous audio, the joint network can emit wrong-script candidates — e.g.
-Russian-looking tokens while transcribing Polish (issue #512).
-`TokenLanguageFilter` picks the highest-logit top-K candidate that matches the
-caller-provided `language`, suppressing cross-script leakage without retraining
-the model.
+vocabulary spanning Latin and Cyrillic alphabets. On short utterances with
+ambiguous audio, the joint network can emit wrong-language tokens — e.g.
+Russian-alphabet tokens while transcribing Polish (issue #512).
+`TokenLanguageFilter` picks the highest-logit top-K candidate whose alphabet
+matches the caller-provided `language`, suppressing wrong-language leakage
+without retraining the model.
 
 Relevant code:
 - `Sources/FluidAudio/Shared/TokenLanguageFilter.swift`
@@ -65,8 +65,8 @@ The filter:
 4. Keeps the highest-logit candidate that passes.
 5. Returns that token plus a top-K softmax probability.
 
-If no in-script candidate exists, returns `nil` and the decoder falls back
-to its unfiltered argmax.
+If no right-language candidate exists in the top-K, returns `nil` and the
+decoder falls back to its unfiltered argmax.
 
 ### Script membership rules
 

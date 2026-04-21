@@ -557,9 +557,9 @@ internal struct TdtDecoderV3: Sendable {
 
     // MARK: - Private Helper Methods
 
-    /// Replace `label`/`score` with the best in-script top-K candidate when the
-    /// joint's top-1 token is out-of-script for `language`. No-op when inputs
-    /// are missing or the prediction is already in-script.
+    /// Replace `label`/`score` with the best right-language top-K candidate
+    /// when the joint's top-1 token is in the wrong language for `language`.
+    /// No-op when inputs are missing or the prediction is already right.
     ///
     /// Blanks are excluded from replacement — substituting silence via top-K
     /// would hallucinate speech, and some vocabs map blankId to an empty string

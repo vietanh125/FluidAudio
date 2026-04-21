@@ -42,12 +42,13 @@ public enum Script: Sendable {
     case cyrillic
 }
 
-/// Filters ASR decoder tokens against a target language's writing script.
+/// Filters ASR decoder tokens against the target language's alphabet.
 ///
-/// Used by the v3 TDT decoder to suppress cross-script leakage (e.g. Parakeet
-/// emitting Cyrillic tokens for a short Polish utterance). Partitions by
-/// Unicode script only; per-language allowlists (Polish vs Czech etc.) could
-/// plug in here later without changing the call-site API.
+/// Used by the v3 TDT decoder to stop the joint network from emitting
+/// wrong-language tokens — e.g. Cyrillic letters while transcribing Polish
+/// (issue #512). Partitions by Unicode script (Latin/Cyrillic) only; a
+/// per-language token allowlist (Polish vs Czech etc.) could plug in here
+/// later without changing the call-site API.
 internal struct TokenLanguageFilter: Sendable {
 
     /// SentencePiece word-boundary marker (▁, U+2581). Stripped before script
@@ -101,7 +102,7 @@ internal struct TokenLanguageFilter: Sendable {
     /// full vocabulary. It is systematically larger than a full-vocab softmax
     /// — use it for relative ranking, not as a drop-in probability.
     ///
-    /// - Returns: `nil` if no in-script match exists or inputs are empty.
+    /// - Returns: `nil` if no right-language match exists or inputs are empty.
     static func filterTopK(
         topKIds: [Int],
         topKLogits: [Float],
@@ -111,9 +112,10 @@ internal struct TokenLanguageFilter: Sendable {
         let count = min(topKIds.count, topKLogits.count)
         guard count > 0 else { return nil }
 
-        // Explicit argmax — CoreML top-K is not guaranteed sorted. The
-        // `bestIdx < 0` clause forces the first match to win even when its
-        // logit is -infinity (otherwise it would never beat the sentinel).
+        // Explicit argmax over right-language candidates. CoreML top-K is not
+        // guaranteed sorted. The `bestIdx < 0` clause forces the first match
+        // to win even when its logit is -infinity (otherwise it would never
+        // beat the sentinel).
         var bestIdx: Int = -1
         var bestLogit: Float = -.infinity
         for idx in 0..<count {

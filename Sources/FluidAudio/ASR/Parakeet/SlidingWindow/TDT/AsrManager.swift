@@ -289,13 +289,13 @@ public actor AsrManager {
             )
         case .tdtJa:
             // The Japanese model outputs Kanji / Hiragana / Katakana, none of
-            // which are covered by the current Latin/Cyrillic script filter.
+            // which are covered by the current Latin/Cyrillic filter.
             // Propagating `language` here would either be a no-op (if no
-            // in-script top-K candidates exist) or — worse — silently filter
-            // out valid Japanese tokens. Drop the hint and log at debug.
+            // right-language top-K candidates exist) or — worse — silently
+            // filter out valid Japanese tokens. Drop the hint and log at debug.
             if language != nil {
                 logger.debug(
-                    "Ignoring `language` hint for tdtJa: script filter currently supports Latin/Cyrillic only; Japanese output is always kept."
+                    "Ignoring `language` hint for tdtJa: TokenLanguageFilter currently supports Latin/Cyrillic only; Japanese output is always kept."
                 )
             }
             let decoder = TdtDecoderV3(config: adaptedConfig)
