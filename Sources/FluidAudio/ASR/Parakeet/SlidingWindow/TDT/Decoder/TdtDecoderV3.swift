@@ -231,8 +231,14 @@ internal struct TdtDecoderV3: Sendable {
             label = decision.token
             var score = TdtDurationMapping.clampProbability(decision.probability)
 
-            // Apply script filtering ONLY if top-1 token is wrong script
-            if let language = language,
+            let blankId = config.tdtConfig.blankId  // 8192 for v3 models
+
+            // Apply script filtering ONLY if top-1 token is non-blank and wrong script.
+            // Blank tokens represent silence; replacing them via top-K would hallucinate
+            // speech. Some vocabularies map blankId to an empty string, which would
+            // otherwise pass the `!matches(...)` check and trigger the filter.
+            if label != blankId,
+                let language = language,
                 let vocab = vocabulary,
                 let topKIds = decision.topKIds,
                 let topKLogits = decision.topKLogits,
@@ -256,8 +262,6 @@ internal struct TdtDecoderV3: Sendable {
             // durationBins typically = [0,1,2,3,4] meaning skip 0-4 frames
             var duration = try TdtDurationMapping.mapDurationBin(
                 decision.durationBin, durationBins: config.tdtConfig.durationBins)
-
-            let blankId = config.tdtConfig.blankId  // 8192 for v3 models
             var blankMask = (label == blankId)  // Is this a blank (silence) token?
 
             let currentTimeIndex = timeIndices
@@ -325,8 +329,10 @@ internal struct TdtDecoderV3: Sendable {
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
 
-                // Apply script filtering ONLY if top-1 token is wrong script
-                if let language = language,
+                // Apply script filtering ONLY if top-1 token is non-blank and wrong script.
+                // See outer-loop comment: blanks must not be replaced via top-K.
+                if label != blankId,
+                    let language = language,
                     let vocab = vocabulary,
                     let topKIds = innerDecision.topKIds,
                     let topKLogits = innerDecision.topKLogits,

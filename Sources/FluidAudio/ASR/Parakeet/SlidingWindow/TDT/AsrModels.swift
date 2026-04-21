@@ -178,12 +178,16 @@ extension AsrModels {
     }
 
     /// Get version-specific required models set
+    ///
+    /// Note: for v3, `JointDecisionv3.mlmodelc` is intentionally omitted. It is
+    /// downloaded opportunistically in `loadInternal` with fallback to the
+    /// standard `JointDecision`, so marking it required would cause
+    /// `modelsExist` to return false (and trigger a full re-download) whenever
+    /// the v3 variant is missing from HuggingFace.
     private static func getRequiredModels(version: AsrModelVersion) -> Set<String> {
         switch version {
         case .tdtJa:
             return ModelNames.TDTJa.requiredModels
-        case .v3:
-            return Names.requiredModelsV3
         default:
             return version.hasFusedEncoder ? Names.requiredModelsFused : Names.requiredModels
         }
