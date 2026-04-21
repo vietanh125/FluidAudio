@@ -176,9 +176,7 @@ final class TdtRefactoredComponentsTests: XCTestCase {
         let decision = TdtJointDecision(
             token: 42,
             probability: 0.95,
-            durationBin: 3,
-            topKIds: nil,
-            topKLogits: nil
+            durationBin: 3
         )
 
         XCTAssertEqual(decision.token, 42)
@@ -190,9 +188,7 @@ final class TdtRefactoredComponentsTests: XCTestCase {
         let decision = TdtJointDecision(
             token: -1,
             probability: 0.0,
-            durationBin: 0,
-            topKIds: nil,
-            topKLogits: nil
+            durationBin: 0
         )
 
         XCTAssertEqual(decision.token, -1)
