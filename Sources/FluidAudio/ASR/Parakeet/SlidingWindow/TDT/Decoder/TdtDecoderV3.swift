@@ -237,21 +237,19 @@ internal struct TdtDecoderV3: Sendable {
                 let topKIds = decision.topKIds,
                 let topKLogits = decision.topKLogits,
                 !topKIds.isEmpty,
-                let tokenText = vocab[label]
+                let tokenText = vocab[label],
+                !ScriptDetection.matches(tokenText, script: language.script),
+                let filtered = ScriptDetection.filterTopK(
+                    topKIds: topKIds,
+                    topKLogits: topKLogits,
+                    vocabulary: vocab,
+                    preferredScript: language.script
+                )
             {
-                // Only filter if top-1 token doesn't match preferred script
-                if !ScriptDetection.matches(tokenText, script: language.script) {
-                    if let filtered = ScriptDetection.filterTopK(
-                        topKIds: topKIds,
-                        topKLogits: topKLogits,
-                        vocabulary: vocab,
-                        preferredScript: language.script
-                    ) {
-                        label = filtered.tokenId
-                        // Update score with filtered token's probability
-                        score = TdtDurationMapping.clampProbability(filtered.logit)
-                    }
-                }
+                label = filtered.tokenId
+                // filtered.probability is already in [0, 1] (softmax over top-K),
+                // so clamping is a no-op safety guard rather than a unit conversion.
+                score = TdtDurationMapping.clampProbability(filtered.probability)
             }
 
             // Map duration bin to actual frame count
@@ -333,21 +331,18 @@ internal struct TdtDecoderV3: Sendable {
                     let topKIds = innerDecision.topKIds,
                     let topKLogits = innerDecision.topKLogits,
                     !topKIds.isEmpty,
-                    let tokenText = vocab[label]
+                    let tokenText = vocab[label],
+                    !ScriptDetection.matches(tokenText, script: language.script),
+                    let filtered = ScriptDetection.filterTopK(
+                        topKIds: topKIds,
+                        topKLogits: topKLogits,
+                        vocabulary: vocab,
+                        preferredScript: language.script
+                    )
                 {
-                    // Only filter if top-1 token doesn't match preferred script
-                    if !ScriptDetection.matches(tokenText, script: language.script) {
-                        if let filtered = ScriptDetection.filterTopK(
-                            topKIds: topKIds,
-                            topKLogits: topKLogits,
-                            vocabulary: vocab,
-                            preferredScript: language.script
-                        ) {
-                            label = filtered.tokenId
-                            // Update score with filtered token's probability
-                            score = TdtDurationMapping.clampProbability(filtered.logit)
-                        }
-                    }
+                    label = filtered.tokenId
+                    // filtered.probability is a proper softmax probability in [0, 1].
+                    score = TdtDurationMapping.clampProbability(filtered.probability)
                 }
 
                 duration = try TdtDurationMapping.mapDurationBin(

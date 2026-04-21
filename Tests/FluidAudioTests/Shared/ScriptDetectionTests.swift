@@ -7,7 +7,8 @@ final class ScriptDetectionTests: XCTestCase {
 
     func testLatinScriptLanguages() {
         let latinLanguages: [Language] = [
-            .english, .polish, .spanish, .french, .german, .italian, .portuguese,
+            .english, .spanish, .french, .german, .italian, .portuguese, .romanian,
+            .polish, .czech, .slovak, .slovenian, .croatian, .bosnian,
         ]
 
         for language in latinLanguages {
@@ -106,6 +107,55 @@ final class ScriptDetectionTests: XCTestCase {
         XCTAssertFalse(ScriptDetection.matches("świat", script: .cyrillic))
     }
 
+    // MARK: - Other Latin-Script Slavic Language Tests
+
+    func testCzechDiacritics() {
+        // Czech: á č ď é ě í ň ó ř š ť ú ů ý ž — all Latin Extended-A
+        for token in ["Příliš", "žluťoučký", "kůň", "ďábelské", "ódy"] {
+            XCTAssertTrue(
+                ScriptDetection.matches(token, script: .latin),
+                "Czech token '\(token)' should match Latin")
+        }
+    }
+
+    func testSlovakDiacritics() {
+        // Slovak adds ĺ ľ ŕ ô — all Latin Extended-A
+        for token in ["Kŕdeľ", "šťastných", "ďatľov", "mĺkveho", "ústí", "koňa"] {
+            XCTAssertTrue(
+                ScriptDetection.matches(token, script: .latin),
+                "Slovak token '\(token)' should match Latin")
+        }
+    }
+
+    func testSlovenianAndCroatianDiacritics() {
+        // Slovenian: č š ž
+        for token in ["Češnja", "sočna"] {
+            XCTAssertTrue(ScriptDetection.matches(token, script: .latin))
+        }
+        // Croatian: č ć đ š ž
+        for token in ["Džemper", "čokolada", "svježe"] {
+            XCTAssertTrue(ScriptDetection.matches(token, script: .latin))
+        }
+    }
+
+    func testRomanianDiacritics() {
+        // Romanian: ă â î ș ț — ș (U+0219) and ț (U+021B) are in Latin Extended-B
+        for token in ["Înșelător", "mâine", "scrisoare", "ți-a"] {
+            XCTAssertTrue(
+                ScriptDetection.matches(token, script: .latin),
+                "Romanian token '\(token)' should match Latin")
+        }
+    }
+
+    func testSlavicLatinLanguagesRejectedAsCyrillic() {
+        // These should never be classified as Cyrillic
+        XCTAssertFalse(ScriptDetection.matches("Příliš", script: .cyrillic))
+        XCTAssertFalse(ScriptDetection.matches("žluťoučký", script: .cyrillic))
+        XCTAssertFalse(ScriptDetection.matches("Kŕdeľ", script: .cyrillic))
+        XCTAssertFalse(ScriptDetection.matches("Džemper", script: .cyrillic))
+        XCTAssertFalse(ScriptDetection.matches("Înșelător", script: .cyrillic))
+    }
+
     // MARK: - Punctuation and Special Characters
 
     func testPunctuationWithLatin() {
@@ -172,8 +222,11 @@ final class ScriptDetectionTests: XCTestCase {
 
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.tokenId, 2)
-        if let logit = result?.logit {
-            XCTAssertEqual(logit, 0.7, accuracy: Float(0.001))
+        if let probability = result?.probability {
+            // Softmax over [0.9, 0.7, 0.5, 0.3]; probability of index 1 ≈ 0.2695
+            XCTAssertGreaterThan(probability, 0.0)
+            XCTAssertLessThan(probability, 1.0)
+            XCTAssertEqual(probability, 0.2695, accuracy: 0.01)
         }
     }
 
@@ -195,8 +248,11 @@ final class ScriptDetectionTests: XCTestCase {
 
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.tokenId, 2)
-        if let logit = result?.logit {
-            XCTAssertEqual(logit, 0.7, accuracy: Float(0.001))
+        if let probability = result?.probability {
+            // Softmax over [0.9, 0.7, 0.5]; probability of index 1 ≈ 0.329
+            XCTAssertGreaterThan(probability, 0.0)
+            XCTAssertLessThan(probability, 1.0)
+            XCTAssertEqual(probability, 0.329, accuracy: 0.01)
         }
     }
 
@@ -240,8 +296,11 @@ final class ScriptDetectionTests: XCTestCase {
 
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.tokenId, 4)
-        if let logit = result?.logit {
-            XCTAssertEqual(logit, 0.3, accuracy: Float(0.001))
+        if let probability = result?.probability {
+            // Softmax over [0.9, 0.7, 0.5, 0.3]; probability of index 3 ≈ 0.1806
+            XCTAssertGreaterThan(probability, 0.0)
+            XCTAssertLessThan(probability, 1.0)
+            XCTAssertEqual(probability, 0.1806, accuracy: 0.01)
         }
     }
 
@@ -254,6 +313,55 @@ final class ScriptDetectionTests: XCTestCase {
         )
 
         XCTAssertNil(result)
+    }
+
+    func testFilterTopKHandlesLengthMismatch() {
+        // Safety guard: if the two top-K arrays disagree on length, the function
+        // should only iterate over the common prefix without crashing.
+        let topKIds = [1, 2, 3]
+        let topKLogits: [Float] = [0.9, 0.7]  // shorter than topKIds
+        let vocabulary = [
+            1: "привет",  // Cyrillic
+            2: "hello",  // Latin
+            3: "world",  // Latin (but out of logits range)
+        ]
+
+        let result = ScriptDetection.filterTopK(
+            topKIds: topKIds,
+            topKLogits: topKLogits,
+            vocabulary: vocabulary,
+            preferredScript: .latin
+        )
+
+        // Should find ID=2 ("hello") within the common prefix of length 2.
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.tokenId, 2)
+    }
+
+    func testFilterTopKProbabilityInValidRange() {
+        // The returned probability must always be a valid probability in [0, 1].
+        let topKIds = [1, 2, 3, 4, 5]
+        let topKLogits: [Float] = [10.0, 5.0, 2.0, 1.0, 0.0]
+        let vocabulary = [
+            1: "привет",
+            2: "hello",
+            3: "world",
+            4: "test",
+            5: "foo",
+        ]
+
+        let result = ScriptDetection.filterTopK(
+            topKIds: topKIds,
+            topKLogits: topKLogits,
+            vocabulary: vocabulary,
+            preferredScript: .latin
+        )
+
+        XCTAssertNotNil(result)
+        if let probability = result?.probability {
+            XCTAssertGreaterThanOrEqual(probability, 0.0)
+            XCTAssertLessThanOrEqual(probability, 1.0)
+        }
     }
 
     func testFilterTopKPolishScenario() {
@@ -275,8 +383,11 @@ final class ScriptDetectionTests: XCTestCase {
 
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.tokenId, 2)  // Should select Polish token
-        if let logit = result?.logit {
-            XCTAssertEqual(logit, 0.6, accuracy: Float(0.001))
+        if let probability = result?.probability {
+            // Softmax over [0.9, 0.6, 0.4]; probability of index 1 ≈ 0.3156
+            XCTAssertGreaterThan(probability, 0.0)
+            XCTAssertLessThan(probability, 1.0)
+            XCTAssertEqual(probability, 0.3156, accuracy: 0.01)
         }
     }
 
@@ -297,6 +408,13 @@ final class ScriptDetectionTests: XCTestCase {
         XCTAssertEqual(Language.polish.rawValue, "pl")
         XCTAssertEqual(Language.russian.rawValue, "ru")
         XCTAssertEqual(Language.ukrainian.rawValue, "uk")
+        // Newly-supported Latin-script Slavic + Romanian
+        XCTAssertEqual(Language.czech.rawValue, "cs")
+        XCTAssertEqual(Language.slovak.rawValue, "sk")
+        XCTAssertEqual(Language.slovenian.rawValue, "sl")
+        XCTAssertEqual(Language.croatian.rawValue, "hr")
+        XCTAssertEqual(Language.bosnian.rawValue, "bs")
+        XCTAssertEqual(Language.romanian.rawValue, "ro")
     }
 
     // MARK: - Unicode Range Tests
@@ -306,6 +424,20 @@ final class ScriptDetectionTests: XCTestCase {
         XCTAssertTrue(ScriptDetection.matches("Ā", script: .latin))  // U+0100
         XCTAssertTrue(ScriptDetection.matches("ž", script: .latin))  // U+017E
         XCTAssertTrue(ScriptDetection.matches("ſ", script: .latin))  // U+017F
+    }
+
+    func testLatinExtendedBRange() {
+        // Test characters in Latin Extended-B (U+0180 to U+024F)
+        XCTAssertTrue(ScriptDetection.matches("ƀ", script: .latin))  // U+0180
+        XCTAssertTrue(ScriptDetection.matches("ș", script: .latin))  // U+0219 (Romanian)
+        XCTAssertTrue(ScriptDetection.matches("ț", script: .latin))  // U+021B (Romanian)
+        XCTAssertTrue(ScriptDetection.matches("ɏ", script: .latin))  // U+024F
+    }
+
+    func testLatinExtendedAdditionalRange() {
+        // Test characters in Latin Extended Additional (U+1E00 to U+1EFF)
+        XCTAssertTrue(ScriptDetection.matches("Ḁ", script: .latin))  // U+1E00
+        XCTAssertTrue(ScriptDetection.matches("ế", script: .latin))  // U+1EBF (Vietnamese)
     }
 
     func testCyrillicRange() {
