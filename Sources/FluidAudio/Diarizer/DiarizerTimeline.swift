@@ -215,6 +215,9 @@ public class DiarizerSpeaker: Identifiable {
         public let tentativeSegments: [DiarizerSegment]
     }
 
+    /// Serializes mutation of this speaker's segment arrays, index, and name.
+    private let lock = NSLock()
+
     /// Speaker ID
     public let id: UUID
 
@@ -232,62 +235,88 @@ public class DiarizerSpeaker: Identifiable {
 
     /// Speaker's string representation
     public var description: String {
-        name ?? "Speaker \(index)"
+        lock.lock()
+        defer { lock.unlock() }
+        return name ?? "Speaker \(index)"
     }
 
     /// Whether this speaker has any segments
     public var hasSegments: Bool {
-        !(finalizedSegments.isEmpty && tentativeSegments.isEmpty)
+        lock.lock()
+        defer { lock.unlock() }
+        return !(finalizedSegments.isEmpty && tentativeSegments.isEmpty)
     }
 
     /// Number of segments (finalized + tentative)
     public var segmentCount: Int {
-        finalizedSegments.count + tentativeSegments.count
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.count + tentativeSegments.count
     }
 
     /// Number of confirmed segments
     public var finalizedSegmentCount: Int {
-        finalizedSegments.count
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.count
     }
 
     /// Number of tentative segments
     public var tentativeSegmentCount: Int {
-        tentativeSegments.count
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.count
     }
 
     /// Last segment (tentative or finalized). Checks tentative segments first, falls back to finalized if none found.
     public var lastSegment: DiarizerSegment? {
-        tentativeSegments.last ?? finalizedSegments.last
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.last ?? finalizedSegments.last
     }
 
     /// Total duration of segments in seconds (finalized + tentative)
     public var speechDuration: Float {
-        finalizedSpeechDuration + tentativeSpeechDuration
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.reduce(0.0) { $0 + $1.duration }
+            + tentativeSegments.reduce(0.0) { $0 + $1.duration }
     }
 
     /// Duration of all finalized segments in seconds
     public var finalizedSpeechDuration: Float {
-        finalizedSegments.reduce(0.0) { $0 + $1.duration }
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.reduce(0.0) { $0 + $1.duration }
     }
 
     /// Duration of all tentative segments in seconds
     public var tentativeSpeechDuration: Float {
-        tentativeSegments.reduce(0.0) { $0 + $1.duration }
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.reduce(0.0) { $0 + $1.duration }
     }
 
     /// Total number of frames spanned by all segments (finalized + tentative)
     public var numSpeechFrames: Int {
-        numFinalizedSpeechFrames + numTentativeSpeechFrames
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.reduce(0) { $0 + $1.length }
+            + tentativeSegments.reduce(0) { $0 + $1.length }
     }
 
     /// Number of frames in all finalized segments
     public var numFinalizedSpeechFrames: Int {
-        finalizedSegments.reduce(0) { $0 + $1.length }
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.reduce(0) { $0 + $1.length }
     }
 
     /// Number of frames in all tentative segments
     public var numTentativeSpeechFrames: Int {
-        tentativeSegments.reduce(0) { $0 + $1.length }
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.reduce(0) { $0 + $1.length }
     }
 
     /// - Parameters:
@@ -315,28 +344,38 @@ public class DiarizerSpeaker: Identifiable {
 
     /// Rename the speaker
     public func rename(to name: String?) {
+        lock.lock()
+        defer { lock.unlock() }
         self.name = name
     }
 
     /// Reassign diarizer output slot
     public func reassign(toSlot slot: Int) {
+        lock.lock()
+        defer { lock.unlock() }
         self.index = slot
     }
 
     /// Finalize all segments
     /// - Parameter minFramesOn: Minimum segment length
     public func finalize() {
+        lock.lock()
+        defer { lock.unlock() }
         finalizedSegments.append(contentsOf: tentativeSegments)
         tentativeSegments.removeAll()
     }
 
     /// Clear segments
     public func reset() {
+        lock.lock()
+        defer { lock.unlock() }
         tentativeSegments.removeAll()
         finalizedSegments.removeAll()
     }
 
     public func rollback(to snapshot: consuming Snapshot, keepingName: Bool = false) {
+        lock.lock()
+        defer { lock.unlock() }
         if !keepingName { self.name = snapshot.name }
         self.index = snapshot.index
         self.finalizedSegments = snapshot.finalizedSegments
@@ -344,7 +383,9 @@ public class DiarizerSpeaker: Identifiable {
     }
 
     public func takeSnapshot() -> Snapshot {
-        Snapshot(
+        lock.lock()
+        defer { lock.unlock() }
+        return Snapshot(
             name: name,
             index: index,
             finalizedSegments: finalizedSegments,
@@ -355,24 +396,32 @@ public class DiarizerSpeaker: Identifiable {
     /// Clear all tentative segments
     /// - Parameter keepingCapacity: Whether to keep the reserved capacity in the tentative segments list.
     public func clearTentative(keepingCapacity: Bool = false) {
+        lock.lock()
+        defer { lock.unlock() }
         tentativeSegments.removeAll(keepingCapacity: keepingCapacity)
     }
 
     /// Append a tentative segment
     /// - Parameter segment: The segment to append
     public func appendTentative(_ segment: DiarizerSegment) {
+        lock.lock()
+        defer { lock.unlock() }
         tentativeSegments.append(segment)
     }
 
     /// Append a finalized segment
     /// - Parameter segment: The segment to append
     public func appendFinalized(_ segment: DiarizerSegment) {
+        lock.lock()
+        defer { lock.unlock() }
         finalizedSegments.append(segment)
     }
 
     /// Append a segment, automatically detecting if it's finalized or tentative
     /// - Parameter segment: The segment to append
     public func append(_ segment: DiarizerSegment) {
+        lock.lock()
+        defer { lock.unlock() }
         if segment.isFinalized {
             finalizedSegments.append(segment)
         } else {
@@ -384,14 +433,18 @@ public class DiarizerSpeaker: Identifiable {
     /// - Returns: The popped segment
     @discardableResult
     public func popLastTentative() -> DiarizerSegment? {
-        tentativeSegments.popLast()
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.popLast()
     }
 
     /// Pop last finalized segment
     /// - Returns: The popped segment
     @discardableResult
     public func popLastFinalized() -> DiarizerSegment? {
-        finalizedSegments.popLast()
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedSegments.popLast()
     }
 
     /// Pop last tentative or finalized segment
@@ -399,6 +452,8 @@ public class DiarizerSpeaker: Identifiable {
     /// - Returns: The popped segment
     @discardableResult
     public func popLast(fromFinalized: Bool) -> DiarizerSegment? {
+        lock.lock()
+        defer { lock.unlock() }
         return
             (fromFinalized
             ? finalizedSegments.popLast()
@@ -410,7 +465,9 @@ public class DiarizerSpeaker: Identifiable {
     /// - Returns: The popped segment
     @discardableResult
     public func popLast() -> DiarizerSegment? {
-        tentativeSegments.popLast() ?? finalizedSegments.popLast()
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativeSegments.popLast() ?? finalizedSegments.popLast()
     }
 
     /// Pop last segment. Pops the last tentative segment first. Falls back to the last finalized segment if no
@@ -420,7 +477,10 @@ public class DiarizerSpeaker: Identifiable {
     public func popLast(
         if predicate: @Sendable (DiarizerSegment) throws -> Bool
     ) rethrows -> DiarizerSegment? {
-        guard let last = lastSegment, try predicate(last) else {
+        lock.lock()
+        defer { lock.unlock() }
+        let last = tentativeSegments.last ?? finalizedSegments.last
+        guard let last, try predicate(last) else {
             return nil
         }
         return tentativeSegments.popLast() ?? finalizedSegments.popLast()
@@ -596,6 +656,12 @@ public class DiarizerTimeline {
         var activeFrameCount: Int = 0
     }
 
+    /// Serializes mutation of `speakers`, `scratches`, prediction buffers, and
+    /// finalized cursor across threads. NSLock is non-recursive, so public
+    /// mutating entry points acquire the lock once and delegate to private
+    /// `_unlocked` helpers when they need to call other mutating logic.
+    private let lock = NSLock()
+
     /// Post-processing configuration
     public let config: DiarizerTimelineConfig
 
@@ -608,33 +674,56 @@ public class DiarizerTimeline {
     public var tentativePredictions: [Float] = []
 
     /// Total number of finalized frames
-    public var numFinalizedFrames: Int { finalizedCursorFrame }
+    public var numFinalizedFrames: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedCursorFrame
+    }
 
     /// Number of tentative frames
-    public var numTentativeFrames: Int { tentativePredictions.count / speakerCapacity }
+    public var numTentativeFrames: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return tentativePredictions.count / speakerCapacity
+    }
 
     /// Total number of frames (finalized + tentative)
-    public var numFrames: Int { numFinalizedFrames + numTentativeFrames }
+    public var numFrames: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return finalizedCursorFrame + tentativePredictions.count / speakerCapacity
+    }
 
     /// Speakers in the timeline
     public private(set) var speakers: [Int: DiarizerSpeaker]
 
     /// Whether the timeline has any segments
-    public var hasSegments: Bool { speakers.values.contains(where: \.hasSegments) }
+    public var hasSegments: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return speakers.values.contains(where: \.hasSegments)
+    }
 
     /// Duration of finalized predictions in seconds
     public var finalizedDuration: Float {
-        Float(numFinalizedFrames) * config.frameDurationSeconds
+        lock.lock()
+        defer { lock.unlock() }
+        return Float(finalizedCursorFrame) * config.frameDurationSeconds
     }
 
     /// Duration of tentative predictions in seconds
     public var tentativeDuration: Float {
-        Float(numTentativeFrames) * config.frameDurationSeconds
+        lock.lock()
+        defer { lock.unlock() }
+        return Float(tentativePredictions.count / speakerCapacity) * config.frameDurationSeconds
     }
 
     /// Duration of all predictions (finalized + tentative) in seconds
     public var duration: Float {
-        Float(numFrames) * config.frameDurationSeconds
+        lock.lock()
+        defer { lock.unlock() }
+        return Float(finalizedCursorFrame + tentativePredictions.count / speakerCapacity)
+            * config.frameDurationSeconds
     }
 
     /// Maximum number of speakers
@@ -713,21 +802,29 @@ public class DiarizerTimeline {
         finalizedPredictions: [Float],
         tentativePredictions: [Float]
     ) throws -> DiarizerTimelineUpdate {
+        lock.lock()
+        defer { lock.unlock() }
         let finalizedCount = finalizedPredictions.count / speakerCapacity
         let tentativeCount = tentativePredictions.count / speakerCapacity
         let chunk = DiarizerChunkResult(
-            startFrame: numFinalizedFrames,
+            startFrame: finalizedCursorFrame,
             finalizedPredictions: finalizedPredictions,
             finalizedFrameCount: finalizedCount,
             tentativePredictions: tentativePredictions,
             tentativeFrameCount: tentativeCount
         )
-        return try addChunk(consume chunk)
+        return try _addChunkUnlocked(consume chunk)
     }
 
     /// Add a new chunk of predictions from the diarizer
     @discardableResult
     public func addChunk(_ chunk: DiarizerChunkResult) throws -> DiarizerTimelineUpdate {
+        lock.lock()
+        defer { lock.unlock() }
+        return try _addChunkUnlocked(chunk)
+    }
+
+    private func _addChunkUnlocked(_ chunk: DiarizerChunkResult) throws -> DiarizerTimelineUpdate {
         try verifyPredictionCounts(
             finalized: chunk.finalizedPredictions,
             tentative: chunk.tentativePredictions
@@ -776,8 +873,14 @@ public class DiarizerTimeline {
 
     /// Finalize all tentative data at end of recording
     public func finalize() {
+        lock.lock()
+        defer { lock.unlock() }
+        _finalizeUnlocked()
+    }
+
+    private func _finalizeUnlocked() {
         finalizedPredictions.append(contentsOf: tentativePredictions)
-        finalizedCursorFrame += numTentativeFrames
+        finalizedCursorFrame += tentativePredictions.count / speakerCapacity
         tentativePredictions.removeAll()
         for speaker in speakers.values {
             speaker.finalize()
@@ -790,6 +893,8 @@ public class DiarizerTimeline {
     public func reset(
         keepingSpeakersWhere condition: (DiarizerSpeaker) -> Bool
     ) {
+        lock.lock()
+        defer { lock.unlock() }
         finalizedPredictions.removeAll()
         tentativePredictions.removeAll()
         finalizedCursorFrame = 0
@@ -804,6 +909,12 @@ public class DiarizerTimeline {
     /// Reset to initial state
     /// - Parameter keepingSpeakers: Whether to keep existing speakers enrolled. Their segments are still reset.
     public func reset(keepingSpeakers: Bool = false) {
+        lock.lock()
+        defer { lock.unlock() }
+        _resetUnlocked(keepingSpeakers: keepingSpeakers)
+    }
+
+    private func _resetUnlocked(keepingSpeakers: Bool) {
         finalizedPredictions.removeAll()
         tentativePredictions.removeAll()
         finalizedCursorFrame = 0
@@ -831,6 +942,9 @@ public class DiarizerTimeline {
         keepingSpeakers: Bool = false,
         isComplete: Bool = true
     ) throws -> DiarizerTimelineUpdate {
+        lock.lock()
+        defer { lock.unlock() }
+
         try verifyPredictionCounts(
             finalized: finalizedPredictions,
             tentative: tentativePredictions
@@ -847,7 +961,7 @@ public class DiarizerTimeline {
             tentativeFrameCount: tentativePredictions.count / speakerCapacity
         )
 
-        reset(keepingSpeakers: keepingSpeakers)
+        _resetUnlocked(keepingSpeakers: keepingSpeakers)
         self.finalizedPredictions = finalizedPredictions
         self.tentativePredictions = tentativePredictions
 
@@ -870,7 +984,7 @@ public class DiarizerTimeline {
         )
 
         if isComplete {
-            finalize()
+            _finalizeUnlocked()
         } else {
             trimPredictions()
         }
@@ -883,6 +997,8 @@ public class DiarizerTimeline {
     }
 
     public func rollback(to snapshot: consuming Snapshot, keepingSpeakers: Bool = false) {
+        lock.lock()
+        defer { lock.unlock() }
         self.finalizedPredictions = snapshot.finalizedPredictions
         self.tentativePredictions = snapshot.tentativePredictions
         self.finalizedCursorFrame = snapshot.numFinalizedFrames
@@ -897,6 +1013,8 @@ public class DiarizerTimeline {
     }
 
     public func takeSnapshot() -> Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
         var speakersSnapshots: [Int: DiarizerSpeaker.Snapshot] = [:]
         for (slot, speaker) in speakers {
             speakersSnapshots[slot] = speaker.takeSnapshot()
@@ -923,6 +1041,8 @@ public class DiarizerTimeline {
         named name: String? = nil,
         atIndex index: Int? = nil
     ) -> DiarizerSpeaker? {
+        lock.lock()
+        defer { lock.unlock() }
         let index = index ?? (0..<speakerCapacity).first { speakers[$0] == nil }
 
         // Ensure index is within bounds
@@ -952,6 +1072,8 @@ public class DiarizerTimeline {
         atIndex index: Int? = nil,
         transferCurrentSegment: Bool = true
     ) -> DiarizerSpeaker? {
+        lock.lock()
+        defer { lock.unlock() }
         // Ensure index is within bounds
         let index = index ?? (0..<speakerCapacity).first { speakers[$0] == nil }
 
@@ -991,6 +1113,8 @@ public class DiarizerTimeline {
         atIndex index: Int,
         clearCurrentSegment: Bool = false
     ) -> DiarizerSpeaker? {
+        lock.lock()
+        defer { lock.unlock() }
         guard index >= 0, index < speakerCapacity else {
             return nil
         }
@@ -1005,7 +1129,9 @@ public class DiarizerTimeline {
 
     /// Get probability for a specific speaker at a finalized frame
     public func probability(speaker: Int, frame: Int) -> Float {
-        let frameOffset = (frame - numFinalizedFrames) * speakerCapacity + finalizedPredictions.count
+        lock.lock()
+        defer { lock.unlock() }
+        let frameOffset = (frame - finalizedCursorFrame) * speakerCapacity + finalizedPredictions.count
         guard frameOffset >= 0,
             frameOffset < finalizedPredictions.count,
             speaker < speakerCapacity
@@ -1015,7 +1141,9 @@ public class DiarizerTimeline {
 
     /// Get probability for a specific speaker at a tentative frame
     public func tentativeProbability(speaker: Int, frame: Int) -> Float {
-        let frameOffset = (frame - numFinalizedFrames) * speakerCapacity
+        lock.lock()
+        defer { lock.unlock() }
+        let frameOffset = (frame - finalizedCursorFrame) * speakerCapacity
         guard frameOffset >= 0,
             frameOffset < tentativePredictions.count,
             speaker < speakerCapacity
@@ -1034,7 +1162,7 @@ public class DiarizerTimeline {
     ) {
         guard !predictions.isEmpty || addTrailingTentative else { return }
 
-        let frameOffset = numFinalizedFrames
+        let frameOffset = finalizedCursorFrame
         let onset = config.onsetThreshold
         let offset = config.offsetThreshold
         let padOnset = config.onsetPadFrames
