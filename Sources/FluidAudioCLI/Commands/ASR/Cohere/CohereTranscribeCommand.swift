@@ -193,7 +193,8 @@ enum CohereTranscribeCommand {
 
             Expected files inside each dir:
                 cohere_encoder.mlmodelc
-                cohere_decoder_cache_external.mlmodelc
+                cohere_decoder_cache_external_v2.mlmodelc  (preferred — ANE-resident)
+                cohere_decoder_cache_external.mlmodelc     (fallback — FP16 dynamic)
                 vocab.json  (in --vocab-dir / --model-dir)
 
             Decode options:

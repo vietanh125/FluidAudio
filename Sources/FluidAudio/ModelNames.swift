@@ -584,16 +584,36 @@ public enum ModelNames {
     }
 
     /// Cohere Transcribe model names
-    /// Encoder-decoder ASR with 14-language support (35-second window architecture)
+    /// Encoder-decoder ASR with 14-language support (35-second window architecture).
+    ///
+    /// Two decoder variants are published:
+    ///   - `decoderCacheExternal` (v1) — FP16, dynamic `attention_mask`
+    ///     (`RangeDim(1, 108)`). CPU/GPU only — dynamic shapes block ANE.
+    ///   - `decoderCacheExternalV2` — FP32, fixed `attention_mask` shape
+    ///     `[1, 1, 1, 108]`. ANE-resident, ~1.6× faster decoder end-to-end
+    ///     on Apple Silicon. Drop-in replacement; `CoherePipeline`
+    ///     auto-detects the variant by inspecting the `attention_mask`
+    ///     input shape.
     public enum CohereTranscribe {
         public static let encoder = "cohere_encoder"
         public static let decoderCacheExternal = "cohere_decoder_cache_external"
+        public static let decoderCacheExternalV2 = "cohere_decoder_cache_external_v2"
         public static let vocab = "vocab.json"
 
         public static let encoderCompiledFile = encoder + ".mlmodelc"
         public static let decoderCacheExternalCompiledFile = decoderCacheExternal + ".mlmodelc"
+        public static let decoderCacheExternalV2CompiledFile = decoderCacheExternalV2 + ".mlmodelc"
 
+        /// Default required set — ships the ANE-friendly v2 decoder.
         public static let requiredModels: Set<String> = [
+            encoderCompiledFile,
+            decoderCacheExternalV2CompiledFile,
+            vocab,
+        ]
+
+        /// Legacy set using the FP16 dynamic decoder (pre-v2). Retained so
+        /// callers that want the older decoder can opt in explicitly.
+        public static let requiredModelsLegacy: Set<String> = [
             encoderCompiledFile,
             decoderCacheExternalCompiledFile,
             vocab,

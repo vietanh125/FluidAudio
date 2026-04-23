@@ -343,10 +343,14 @@ public actor CoherePipeline {
     /// Load encoder, decoder and vocabulary from (potentially different) directories.
     ///
     /// This supports mixed-precision — e.g. INT8 encoder + FP16 decoder. Pass
-    /// the same URL to both for a single-precision setup. Each directory must
-    /// contain `cohere_encoder.mlmodelc` and/or
-    /// `cohere_decoder_cache_external.mlmodelc`; the vocab is loaded from
-    /// `vocabDir`.
+    /// the same URL to both for a single-precision setup.
+    ///
+    /// Decoder lookup in `decoderDir` prefers
+    /// `cohere_decoder_cache_external_v2.mlmodelc` (static-shape,
+    /// ANE-friendly) and falls back to the legacy
+    /// `cohere_decoder_cache_external.mlmodelc` (FP16, dynamic
+    /// `attention_mask`). The runtime automatically adapts the mask build
+    /// to whichever variant is loaded.
     public static func loadModels(
         encoderDir: URL,
         decoderDir: URL,
@@ -356,8 +360,25 @@ public actor CoherePipeline {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
 
-        let encoderURL = encoderDir.appendingPathComponent("cohere_encoder.mlmodelc")
-        let decoderURL = decoderDir.appendingPathComponent("cohere_decoder_cache_external.mlmodelc")
+        let encoderURL = encoderDir.appendingPathComponent(
+            ModelNames.CohereTranscribe.encoderCompiledFile)
+
+        let fm = FileManager.default
+        let v2URL = decoderDir.appendingPathComponent(
+            ModelNames.CohereTranscribe.decoderCacheExternalV2CompiledFile)
+        let v1URL = decoderDir.appendingPathComponent(
+            ModelNames.CohereTranscribe.decoderCacheExternalCompiledFile)
+        let decoderURL: URL
+        if fm.fileExists(atPath: v2URL.path) {
+            decoderURL = v2URL
+        } else if fm.fileExists(atPath: v1URL.path) {
+            decoderURL = v1URL
+        } else {
+            throw CohereAsrError.modelNotFound(
+                "No cohere decoder found in \(decoderDir.path). "
+                    + "Expected \(ModelNames.CohereTranscribe.decoderCacheExternalV2CompiledFile) "
+                    + "or \(ModelNames.CohereTranscribe.decoderCacheExternalCompiledFile).")
+        }
 
         pipelineLogger.info("Loading encoder from \(encoderURL.path)")
         let encoder = try await MLModel.load(contentsOf: encoderURL, configuration: config)
@@ -520,6 +541,19 @@ public actor CoherePipeline {
             return .float16
         }()
 
+        // Probe attention_mask shape: if the decoder was exported with a
+        // fixed [1,1,1,108] attention_mask (static / ANE-friendly variant),
+        // build a full-length additive causal mask every step. Otherwise
+        // fall back to the RangeDim dynamic [1,1,1,step+1] zero-filled mask.
+        let useStaticSelfMask: Bool = {
+            guard let desc = decoder.modelDescription.inputDescriptionsByName["attention_mask"],
+                let arrCon = desc.multiArrayConstraint
+            else { return false }
+            let shape = arrCon.shape
+            return shape.count == 4
+                && shape[3].intValue == CohereAsrConfig.maxSeqLen
+        }()
+
         var kCaches: [MLMultiArray] = []
         var vCaches: [MLMultiArray] = []
         kCaches.reserveCapacity(CohereAsrConfig.numDecoderLayers)
@@ -554,9 +588,8 @@ public actor CoherePipeline {
             let positionId = try MLMultiArray(shape: [1, 1], dataType: .int32)
             positionId[0] = NSNumber(value: step)
 
-            let selfMask = try MLMultiArray(
-                shape: [1, 1, 1, NSNumber(value: step + 1)], dataType: cacheDType)
-            Self.zeroFill(selfMask)
+            let selfMask = try Self.buildSelfAttentionMask(
+                step: step, useStatic: useStaticSelfMask, dtype: cacheDType)
 
             var inputs: [String: MLFeatureValue] = [
                 "input_id": MLFeatureValue(multiArray: inputId),
@@ -619,6 +652,49 @@ public actor CoherePipeline {
     }
 
     // MARK: Helpers
+
+    /// Build the self-attention additive mask for one decoding step.
+    ///
+    /// Dynamic path (RangeDim decoder): shape `[1, 1, 1, step+1]`, all zeros.
+    /// The model's attended K/V slice is exactly `step+1` long.
+    ///
+    /// Static path (fixed-shape decoder): shape `[1, 1, 1, maxSeqLen]`. The
+    /// decoder attends over the full cache; positions `[0..=step]` get `0`
+    /// (attend) and `[step+1..maxSeqLen-1]` get `-1e4` (masked — the cache
+    /// slots aren't written yet).
+    static func buildSelfAttentionMask(
+        step: Int, useStatic: Bool, dtype: MLMultiArrayDataType
+    ) throws -> MLMultiArray {
+        if !useStatic {
+            let mask = try MLMultiArray(
+                shape: [1, 1, 1, NSNumber(value: step + 1)], dataType: dtype)
+            zeroFill(mask)
+            return mask
+        }
+
+        let length = CohereAsrConfig.maxSeqLen
+        let mask = try MLMultiArray(
+            shape: [1, 1, 1, NSNumber(value: length)], dataType: dtype)
+        zeroFill(mask)
+        let firstBlocked = step + 1
+        guard firstBlocked < length else { return mask }
+
+        let invalidValue: Float = -1.0e4
+        switch dtype {
+        case .float32:
+            let ptr = mask.dataPointer.bindMemory(to: Float.self, capacity: length)
+            for i in firstBlocked..<length { ptr[i] = invalidValue }
+        case .float16:
+            let ptr = mask.dataPointer.bindMemory(to: UInt16.self, capacity: length)
+            let bits = float16Bits(invalidValue)
+            for i in firstBlocked..<length { ptr[i] = bits }
+        default:
+            for i in firstBlocked..<length {
+                mask[[0, 0, 0, NSNumber(value: i)] as [NSNumber]] = NSNumber(value: invalidValue)
+            }
+        }
+        return mask
+    }
 
     static func buildCrossAttentionMask(
         encoderSeqLen: Int, encoderValid: Int, dtype: MLMultiArrayDataType
