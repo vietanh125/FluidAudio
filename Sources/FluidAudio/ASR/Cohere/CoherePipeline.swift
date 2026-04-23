@@ -340,21 +340,43 @@ public actor CoherePipeline {
         self.melExtractor = mel
     }
 
+    /// Cache-external decoder variant selector.
+    ///
+    /// Both decoders share the same input/output contract; the difference is
+    /// the `attention_mask` shape and how position is sourced. `CoherePipeline`
+    /// auto-detects the runtime contract from the loaded decoder's input
+    /// description, so this enum only controls which file is loaded.
+    public enum DecoderVariant: Sendable {
+        /// `cohere_decoder_cache_external_v2.mlmodelc` — fixed
+        /// `attention_mask` shape `[1, 1, 1, 108]`, ANE-friendly. Default.
+        case v2
+        /// `cohere_decoder_cache_external.mlmodelc` — dynamic
+        /// `attention_mask` (`RangeDim(1, 108)`), CPU/GPU only.
+        case v1
+
+        public var compiledFileName: String {
+            switch self {
+            case .v2: return ModelNames.CohereTranscribe.decoderCacheExternalV2CompiledFile
+            case .v1: return ModelNames.CohereTranscribe.decoderCacheExternalCompiledFile
+            }
+        }
+    }
+
     /// Load encoder, decoder and vocabulary from (potentially different) directories.
     ///
     /// This supports mixed-precision — e.g. INT8 encoder + FP16 decoder. Pass
     /// the same URL to both for a single-precision setup.
     ///
-    /// Decoder lookup in `decoderDir` prefers
-    /// `cohere_decoder_cache_external_v2.mlmodelc` (static-shape,
-    /// ANE-friendly) and falls back to the legacy
-    /// `cohere_decoder_cache_external.mlmodelc` (FP16, dynamic
-    /// `attention_mask`). The runtime automatically adapts the mask build
-    /// to whichever variant is loaded.
+    /// `decoderVariant` selects which cache-external decoder file to load
+    /// from `decoderDir`. The default (`.v2`) is the ANE-friendly
+    /// static-shape build; pass `.v1` for the legacy FP16 dynamic-shape
+    /// decoder. The runtime automatically adapts the `attention_mask`
+    /// build to whichever variant is loaded.
     public static func loadModels(
         encoderDir: URL,
         decoderDir: URL,
         vocabDir: URL,
+        decoderVariant: DecoderVariant = .v2,
         computeUnits: MLComputeUnits = .all
     ) async throws -> LoadedModels {
         let config = MLModelConfiguration()
@@ -362,22 +384,11 @@ public actor CoherePipeline {
 
         let encoderURL = encoderDir.appendingPathComponent(
             ModelNames.CohereTranscribe.encoderCompiledFile)
+        let decoderURL = decoderDir.appendingPathComponent(decoderVariant.compiledFileName)
 
-        let fm = FileManager.default
-        let v2URL = decoderDir.appendingPathComponent(
-            ModelNames.CohereTranscribe.decoderCacheExternalV2CompiledFile)
-        let v1URL = decoderDir.appendingPathComponent(
-            ModelNames.CohereTranscribe.decoderCacheExternalCompiledFile)
-        let decoderURL: URL
-        if fm.fileExists(atPath: v2URL.path) {
-            decoderURL = v2URL
-        } else if fm.fileExists(atPath: v1URL.path) {
-            decoderURL = v1URL
-        } else {
+        guard FileManager.default.fileExists(atPath: decoderURL.path) else {
             throw CohereAsrError.modelNotFound(
-                "No cohere decoder found in \(decoderDir.path). "
-                    + "Expected \(ModelNames.CohereTranscribe.decoderCacheExternalV2CompiledFile) "
-                    + "or \(ModelNames.CohereTranscribe.decoderCacheExternalCompiledFile).")
+                "Decoder not found at \(decoderURL.path) (variant: \(decoderVariant)).")
         }
 
         pipelineLogger.info("Loading encoder from \(encoderURL.path)")

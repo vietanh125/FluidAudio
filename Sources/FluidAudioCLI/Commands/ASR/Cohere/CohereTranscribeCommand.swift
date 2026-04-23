@@ -25,6 +25,7 @@ enum CohereTranscribeCommand {
         var repetitionPenalty: Float = 1.1
         var noRepeatNgram = 3
         var computeUnits: MLComputeUnits = .all
+        var decoderVariant: CoherePipeline.DecoderVariant = .v2
 
         var i = 1
         while i < arguments.count {
@@ -82,6 +83,17 @@ enum CohereTranscribeCommand {
                 computeUnits = .cpuOnly
             case "--cpu-gpu":
                 computeUnits = .cpuAndGPU
+            case "--decoder-variant":
+                if i + 1 < arguments.count {
+                    switch arguments[i + 1].lowercased() {
+                    case "v2": decoderVariant = .v2
+                    case "v1": decoderVariant = .v1
+                    default:
+                        logger.error("Unknown decoder variant '\(arguments[i + 1])' (expected v1 or v2)")
+                        exit(1)
+                    }
+                    i += 1
+                }
             default:
                 logger.warning("Ignoring unknown option: \(arg)")
             }
@@ -109,7 +121,8 @@ enum CohereTranscribeCommand {
             maxTokens: maxTokens,
             repetitionPenalty: repetitionPenalty,
             noRepeatNgram: noRepeatNgram,
-            computeUnits: computeUnits
+            computeUnits: computeUnits,
+            decoderVariant: decoderVariant
         )
     }
 
@@ -122,7 +135,8 @@ enum CohereTranscribeCommand {
         maxTokens: Int,
         repetitionPenalty: Float,
         noRepeatNgram: Int,
-        computeUnits: MLComputeUnits
+        computeUnits: MLComputeUnits,
+        decoderVariant: CoherePipeline.DecoderVariant
     ) async {
         guard #available(macOS 14, iOS 17, *) else {
             logger.error("Cohere mixed pipeline requires macOS 14 or later")
@@ -141,11 +155,14 @@ enum CohereTranscribeCommand {
             logger.info("Vocab dir:    \(vocabDir.path)")
             logger.info("Language:     \(language.englishName) (\(language.rawValue))")
 
+            logger.info("Decoder:      \(decoderVariant)")
+
             let loadStart = CFAbsoluteTimeGetCurrent()
             let models = try await CoherePipeline.loadModels(
                 encoderDir: encoderDir,
                 decoderDir: decoderDir,
                 vocabDir: vocabDir,
+                decoderVariant: decoderVariant,
                 computeUnits: computeUnits)
             let loadSecs = CFAbsoluteTimeGetCurrent() - loadStart
             logger.info("Models loaded in \(String(format: "%.2f", loadSecs))s")
@@ -193,8 +210,8 @@ enum CohereTranscribeCommand {
 
             Expected files inside each dir:
                 cohere_encoder.mlmodelc
-                cohere_decoder_cache_external_v2.mlmodelc  (preferred — ANE-resident)
-                cohere_decoder_cache_external.mlmodelc     (fallback — FP16 dynamic)
+                cohere_decoder_cache_external_v2.mlmodelc  (v2 — ANE-resident static shapes)
+                cohere_decoder_cache_external.mlmodelc     (v1 — FP16 dynamic RangeDim)
                 vocab.json  (in --vocab-dir / --model-dir)
 
             Decode options:
@@ -203,6 +220,7 @@ enum CohereTranscribeCommand {
                 --max-tokens <n>                Max decoded tokens (default: 108)
                 --repetition-penalty <f>        CTRL-style penalty, 1.0 disables (default: 1.1)
                 --no-repeat-ngram <n>           Forbid repeating n-grams, 0 disables (default: 3)
+                --decoder-variant <v1|v2>       Decoder to load (default: v2)
 
             Compute units:
                 --cpu-only                      Force CPU
