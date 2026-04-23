@@ -4,6 +4,14 @@ import Foundation
 public enum Repo: String, CaseIterable, Sendable {
     case vad = "FluidInference/silero-vad-coreml"
     case parakeetV3 = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
+    /// Mediform full-logits variant of parakeet-v3: ships the raw-logits
+    /// `JointSingleStep.mlmodelc` alongside the legacy fp16 TDT files so
+    /// host-side trie vocabulary boosting (see CustomVocabulary/Boosting) can
+    /// swap the argmax-internal JointDecision model at decode time. Same model
+    /// family as `.parakeetV3`; select this repo (or pass `loadBoostJoint: true`
+    /// against it) when decode-time boosting is wanted. NOTE: carries the legacy
+    /// fp16 encoder layout, not upstream's int4-per-channel v3 files.
+    case parakeetV3FullLogits = "Mediform/parakeet-full-logits-coreml"
     case parakeetV2 = "FluidInference/parakeet-tdt-0.6b-v2-coreml"
     case parakeetCtc110m = "FluidInference/parakeet-ctc-110m-coreml"
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
@@ -184,6 +192,12 @@ public enum Repo: String, CaseIterable, Sendable {
     /// Fully qualified HuggingFace repo path (owner/name)
     public var remotePath: String {
         switch self {
+        case .parakeetV3FullLogits:
+            // Mediform fork: includes the raw-logits JointSingleStep.mlmodelc
+            // alongside the standard FluidInference bundle so host-side
+            // vocabulary biasing (see CustomVocabulary/Boosting) can swap
+            // the argmax-internal JointDecision model at decode time.
+            return "Mediform/parakeet-full-logits-coreml"
         case .parakeetCtc110m:
             return "FluidInference/parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
@@ -406,6 +420,12 @@ public enum ModelNames {
         public static let encoderV2File = "Encoder_v2.mlmodelc"
         public static let encoderInt4File = "EncoderInt4.mlmodelc"
         public static let ctcHeadFile = ctcHead + ".mlmodelc"
+
+        /// Optional raw-logits single-step joint for host-side vocabulary
+        /// biasing (see CustomVocabulary/Boosting). Not part of requiredModels;
+        /// loaded opportunistically when present alongside the other TDT files.
+        public static let jointSingleStep = "JointSingleStep"
+        public static let jointSingleStepFile = jointSingleStep + ".mlmodelc"
 
         /// Required models for v2 / legacy split-frontend loaders.
         /// v3 uses `requiredModelsV3(precision:)` (with `jointV3File`).
@@ -1546,6 +1566,17 @@ public enum ModelNames {
         case .parakeetV3:
             let precision = ParakeetEncoderPrecision(rawValue: variant ?? "") ?? .int8
             return ModelNames.ASR.requiredModelsV3(precision: precision)
+        case .parakeetV3FullLogits:
+            // Mediform fork (`Mediform/parakeet-full-logits-coreml`) ships the
+            // legacy fp16 TDT file set (Encoder/Decoder/JointDecision) PLUS the
+            // raw-logits `JointSingleStep.mlmodelc` for host-side trie vocabulary
+            // biasing. It does NOT carry upstream's int4-per-channel v3 layout
+            // (EncoderInt4 / JointDecisionv3), so use the legacy requiredModels
+            // set, not `requiredModelsV3(precision:)`. JointSingleStep is marked
+            // required so `downloadRepo`'s pattern filter pulls it and
+            // `loadModelsOnce` doesn't trip the cache-wipe path on every launch.
+            return ModelNames.ASR.requiredModels
+                .union([ModelNames.ASR.jointSingleStepFile])
         case .parakeetV2:
             return ModelNames.ASR.requiredModels
         case .parakeetTdtCtc110m:

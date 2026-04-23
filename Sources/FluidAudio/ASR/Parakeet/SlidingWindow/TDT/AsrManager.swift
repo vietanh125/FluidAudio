@@ -57,6 +57,13 @@ public actor AsrManager {
         config.seamGapRepairMinGapSeconds
     }
 
+    /// Optional trie-based vocabulary booster. When set alongside a model
+    /// bundle that includes `JointSingleStep.mlmodelc`, TDT decoding routes
+    /// joint calls through the raw-logits joint and applies this booster's
+    /// per-step log-prob offsets. No effect if the single-step joint is
+    /// unavailable. Set via `setBooster(_:)`.
+    internal var parakeetBooster: ParakeetBooster?
+
     /// Cached vocabulary loaded once during initialization
     internal var vocabulary: [Int: String] = [:]
     #if DEBUG
@@ -106,8 +113,25 @@ public actor AsrManager {
 
     internal func makeWorkerClone() -> AsrManager? {
         guard let models = asrModels else { return nil }
-        return AsrManager(config: config, models: models)
+        let clone = AsrManager(config: config, models: models)
+        return clone
     }
+
+    /// Install a vocabulary booster for subsequent transcriptions.
+    ///
+    /// Requires a model bundle that includes `JointSingleStep.mlmodelc`; if the
+    /// file is missing the booster is silently ignored at decode time (no
+    /// regression versus baseline transcription). Pass `nil` to disable.
+    public func setBooster(_ booster: ParakeetBooster?) {
+        parakeetBooster = booster
+        if booster != nil && asrModels?.jointSingleStep == nil {
+            logger.warning(
+                "Booster installed but JointSingleStep model is not loaded; boosting will be inactive."
+            )
+        }
+    }
+
+    public var hasBooster: Bool { parakeetBooster != nil }
 
     /// Returns the current transcription progress stream for offline long audio (>240,000 samples / ~15s).
     /// Only one session is supported at a time.
@@ -348,7 +372,9 @@ public actor AsrManager {
                 isLastChunk: isLastChunk,
                 globalFrameOffset: globalFrameOffset,
                 emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
-                initialTimeIndexOverride: initialTimeIndexOverride
+                initialTimeIndexOverride: initialTimeIndexOverride,
+                booster: parakeetBooster,
+                boostJointModel: models.jointSingleStep
             )
         }
     }
@@ -513,6 +539,36 @@ public actor AsrManager {
             }
             throw error
         }
+    }
+
+    /// Transcribe with a per-call vocabulary booster, scoped to THIS decode only.
+    ///
+    /// The previously installed booster (if any, via `setBooster`) is restored
+    /// afterward. Lets a host run iterative decode → retrieve relevant terms →
+    /// re-decode with a transient booster without owning manager booster state.
+    /// Pass `nil` to decode unboosted. Like `setBooster`, the booster takes
+    /// effect only when `JointSingleStep.mlmodelc` is loaded (else inactive).
+    ///
+    /// The caller supplies a fully-built `ParakeetBooster` (e.g. via
+    /// `ParakeetBooster.fromTokenMap` over a pre-tokenized term subset) so this
+    /// method needs no runtime tokenizer — works on bundles that ship only an
+    /// id→token vocabulary (no `tokenizer.json`).
+    ///
+    /// Concurrency: the booster is held on actor state for the call's span, so
+    /// overlapping calls on the SAME manager would race; drive one serially
+    /// (fan-out callers should use separate managers / `makeWorkerClone()`).
+    public func transcribe(
+        _ audioSamples: [Float],
+        decoderState: inout TdtDecoderState,
+        booster: ParakeetBooster?
+    ) async throws -> ASRResult {
+        guard let booster else {
+            return try await transcribe(audioSamples, decoderState: &decoderState)
+        }
+        let previous = parakeetBooster
+        parakeetBooster = booster
+        defer { parakeetBooster = previous }
+        return try await transcribe(audioSamples, decoderState: &decoderState)
     }
 
     nonisolated internal func normalizedTimingToken(_ token: String) -> String {
