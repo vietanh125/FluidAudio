@@ -81,6 +81,12 @@ public enum Repo: String, CaseIterable, Sendable {
     /// Fully qualified HuggingFace repo path (owner/name)
     public var remotePath: String {
         switch self {
+        case .parakeet:
+            // Mediform fork: includes the raw-logits JointSingleStep.mlmodelc
+            // alongside the standard FluidInference bundle so host-side
+            // vocabulary biasing (see CustomVocabulary/Boosting) can swap
+            // the argmax-internal JointDecision model at decode time.
+            return "Mediform/parakeet-full-logits-coreml"
         case .parakeetCtc110m:
             return "FluidInference/parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
@@ -225,6 +231,12 @@ public enum ModelNames {
         public static let decoderFile = decoder + ".mlmodelc"
         public static let jointFile = joint + ".mlmodelc"
         public static let ctcHeadFile = ctcHead + ".mlmodelc"
+
+        /// Optional raw-logits single-step joint for host-side vocabulary
+        /// biasing (see CustomVocabulary/Boosting). Not part of requiredModels;
+        /// loaded opportunistically when present alongside the other TDT files.
+        public static let jointSingleStep = "JointSingleStep"
+        public static let jointSingleStepFile = jointSingleStep + ".mlmodelc"
 
         public static let requiredModels: Set<String> = [
             preprocessorFile,
@@ -644,7 +656,16 @@ public enum ModelNames {
         switch repo {
         case .vad:
             return ModelNames.VAD.requiredModels
-        case .parakeet, .parakeetV2:
+        case .parakeet:
+            // Mediform fork (`Mediform/parakeet-full-logits-coreml`) ships
+            // the raw-logits `JointSingleStep.mlmodelc` alongside the
+            // standard TDT files for host-side vocabulary biasing. Mark
+            // it as required so `downloadRepo`'s pattern filter pulls it
+            // and `loadModelsOnce` doesn't trip the cache-wipe path on
+            // every launch when callers ask for it via `loadBoostJoint`.
+            return ModelNames.ASR.requiredModels
+                .union([ModelNames.ASR.jointSingleStepFile])
+        case .parakeetV2:
             return ModelNames.ASR.requiredModels
         case .parakeetTdtCtc110m:
             return ModelNames.ASR.requiredModelsFused
