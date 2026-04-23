@@ -78,6 +78,11 @@ public struct AsrModels: Sendable {
     public let joint: MLModel
     /// Optional CTC decoder head for custom vocabulary (encoder features → CTC logits)
     public let ctcHead: MLModel?
+    /// Optional raw-logits single-step joint for host-side vocabulary biasing.
+    /// Present when `JointSingleStep.mlmodelc` is available alongside the other
+    /// TDT files. `AsrManager.transcribe(..., booster:)` requires this model to
+    /// be loaded; otherwise biasing silently falls back to unbiased decoding.
+    public let jointSingleStep: MLModel?
     public let configuration: MLModelConfiguration
     public let vocabulary: [Int: String]
     public let version: AsrModelVersion
@@ -90,6 +95,7 @@ public struct AsrModels: Sendable {
         decoder: MLModel,
         joint: MLModel,
         ctcHead: MLModel? = nil,
+        jointSingleStep: MLModel? = nil,
         configuration: MLModelConfiguration,
         vocabulary: [Int: String],
         version: AsrModelVersion
@@ -99,6 +105,7 @@ public struct AsrModels: Sendable {
         self.decoder = decoder
         self.joint = joint
         self.ctcHead = ctcHead
+        self.jointSingleStep = jointSingleStep
         self.configuration = configuration
         self.vocabulary = vocabulary
         self.version = version
@@ -205,7 +212,8 @@ extension AsrModels {
         from directory: URL,
         configuration: MLModelConfiguration? = nil,
         version: AsrModelVersion = .v3,
-        progressHandler: DownloadUtils.ProgressHandler? = nil
+        progressHandler: DownloadUtils.ProgressHandler? = nil,
+        loadBoostJoint: Bool = false
     ) async throws -> AsrModels {
         // Validate that CTC-only models use their dedicated managers
         if version.isCtcOnly {
@@ -307,12 +315,36 @@ extension AsrModels {
             }
         }
 
+        // Optionally load the raw-logits single-step joint used for vocabulary
+        // biasing. Only v3 currently ships one; we look in the same directory
+        // and silently skip if absent so existing deployments keep working.
+        // Opt-in via `loadBoostJoint` so non-boosting callers don't pay the
+        // load cost / carry the model in memory.
+        var jointSingleStepModel: MLModel?
+        if loadBoostJoint && version == .v3 {
+            let repoDir = repoPath(from: directory, version: version)
+            let jssPath = repoDir.appendingPathComponent(Names.jointSingleStepFile)
+            if FileManager.default.fileExists(atPath: jssPath.path) {
+                let jssConfig = MLModelConfiguration()
+                jssConfig.computeUnits = config.computeUnits
+                do {
+                    jointSingleStepModel = try MLModel(contentsOf: jssPath, configuration: jssConfig)
+                    logger.info("Loaded optional JointSingleStep for vocabulary biasing")
+                } catch {
+                    logger.warning(
+                        "JointSingleStep found at \(jssPath.path) but failed to load: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+
         let asrModels = AsrModels(
             encoder: encoderModel,
             preprocessor: preprocessorModel,
             decoder: decoderModel,
             joint: jointModel,
             ctcHead: ctcHeadModel,
+            jointSingleStep: jointSingleStepModel,
             configuration: config,
             vocabulary: try loadVocabulary(from: directory, version: version),
             version: version
@@ -370,12 +402,13 @@ extension AsrModels {
     public static func loadFromCache(
         configuration: MLModelConfiguration? = nil,
         version: AsrModelVersion = .v3,
-        progressHandler: DownloadUtils.ProgressHandler? = nil
+        progressHandler: DownloadUtils.ProgressHandler? = nil,
+        loadBoostJoint: Bool = false
     ) async throws -> AsrModels {
         let cacheDir = defaultCacheDirectory(for: version)
         return try await load(
             from: cacheDir, configuration: configuration, version: version,
-            progressHandler: progressHandler)
+            progressHandler: progressHandler, loadBoostJoint: loadBoostJoint)
     }
 
     /// Load models with automatic recovery on compilation failures
@@ -507,12 +540,13 @@ extension AsrModels {
         to directory: URL? = nil,
         configuration: MLModelConfiguration? = nil,
         version: AsrModelVersion = .v3,
-        progressHandler: DownloadUtils.ProgressHandler? = nil
+        progressHandler: DownloadUtils.ProgressHandler? = nil,
+        loadBoostJoint: Bool = false
     ) async throws -> AsrModels {
         let targetDir = try await download(to: directory, version: version, progressHandler: progressHandler)
         return try await load(
             from: targetDir, configuration: configuration, version: version,
-            progressHandler: progressHandler)
+            progressHandler: progressHandler, loadBoostJoint: loadBoostJoint)
     }
 
     public static func modelsExist(at directory: URL) -> Bool {

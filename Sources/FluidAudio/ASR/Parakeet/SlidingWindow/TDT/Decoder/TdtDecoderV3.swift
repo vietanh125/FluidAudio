@@ -69,7 +69,9 @@ internal struct TdtDecoderV3: Sendable {
         decoderState: inout TdtDecoderState,
         contextFrameAdjustment: Int = 0,
         isLastChunk: Bool = false,
-        globalFrameOffset: Int = 0
+        globalFrameOffset: Int = 0,
+        booster: ParakeetBooster? = nil,
+        boostJointModel: MLModel? = nil
     ) async throws -> TdtHypothesis {
         // Early exit for very short audio (< 160ms)
         guard encoderSequenceLength > 1 else {
@@ -175,6 +177,18 @@ internal struct TdtDecoderV3: Sendable {
         var tokensProcessedThisChunk = 0  // Track tokens per chunk to prevent runaway decoding
         var iterCount = 0
 
+        // Vocabulary biasing: when both a booster and the raw-logits joint
+        // model are supplied, the joint path swaps to `parakeet_joint_single_step`
+        // and adds `boostVector` to token logits before argmax. The boost
+        // vector depends only on `hypothesis.ySequence`, so it is refreshed at
+        // the top of each outer iteration and reused inside the blank loop
+        // (which can't mutate ySequence).
+        let boostingEnabled = (booster != nil && boostJointModel != nil)
+        if booster != nil && boostJointModel == nil {
+            logger.warning("Booster supplied without boost joint model — falling back to unbiased decoding")
+        }
+        var boostVector: [Float] = []
+
         // ===== MAIN DECODING LOOP =====
         // Process each encoder frame until we've consumed all audio
         while activeMask {
@@ -210,20 +224,42 @@ internal struct TdtDecoderV3: Sendable {
                 from: decoderResult.output, key: "decoder", errorMessage: "Invalid decoder output")
             try modelInference.normalizeDecoderProjection(decoderProjection, into: reusableDecoderStep)
 
-            // Run joint network with preallocated inputs
-            let decision = try modelInference.runJointPrepared(
-                encoderFrames: encoderFrames,
-                timeIndex: safeTimeIndices,
-                preparedDecoderStep: reusableDecoderStep,
-                model: jointModel,
-                encoderStep: reusableEncoderStep,
-                encoderDestPtr: encDestPtr,
-                encoderDestStride: encDestStride,
-                inputProvider: jointInput,
-                tokenIdBacking: tokenIdBacking,
-                tokenProbBacking: tokenProbBacking,
-                durationBacking: durationBacking
-            )
+            // Refresh boost vector at top of outer iteration (hypothesis.ySequence
+            // has potentially grown since the previous joint call).
+            if boostingEnabled, let booster {
+                boostVector = booster.boostLogprobs(previousTokens: hypothesis.ySequence[...])
+            }
+
+            // Run joint network with preallocated inputs; swap to the raw-logits
+            // path when vocabulary biasing is active.
+            let decision: TdtJointDecision
+            if boostingEnabled, let boostJointModel {
+                decision = try modelInference.runJointPreparedBoosted(
+                    encoderFrames: encoderFrames,
+                    timeIndex: safeTimeIndices,
+                    preparedDecoderStep: reusableDecoderStep,
+                    model: boostJointModel,
+                    encoderStep: reusableEncoderStep,
+                    encoderDestPtr: encDestPtr,
+                    encoderDestStride: encDestStride,
+                    inputProvider: jointInput,
+                    boostVector: boostVector
+                )
+            } else {
+                decision = try modelInference.runJointPrepared(
+                    encoderFrames: encoderFrames,
+                    timeIndex: safeTimeIndices,
+                    preparedDecoderStep: reusableDecoderStep,
+                    model: jointModel,
+                    encoderStep: reusableEncoderStep,
+                    encoderDestPtr: encDestPtr,
+                    encoderDestStride: encDestStride,
+                    inputProvider: jointInput,
+                    tokenIdBacking: tokenIdBacking,
+                    tokenProbBacking: tokenProbBacking,
+                    durationBacking: durationBacking
+                )
+            }
 
             // Predict token (what to emit) and duration (how many frames to skip)
             label = decision.token
@@ -284,20 +320,36 @@ internal struct TdtDecoderV3: Sendable {
                 try Task.checkCancellation()
                 timeIndicesCurrentLabels = timeIndices
 
-                // INTENTIONAL: Reusing prepared decoder step from outside loop
-                let innerDecision = try modelInference.runJointPrepared(
-                    encoderFrames: encoderFrames,
-                    timeIndex: safeTimeIndices,
-                    preparedDecoderStep: reusableDecoderStep,
-                    model: jointModel,
-                    encoderStep: reusableEncoderStep,
-                    encoderDestPtr: encDestPtr,
-                    encoderDestStride: encDestStride,
-                    inputProvider: jointInput,
-                    tokenIdBacking: tokenIdBacking,
-                    tokenProbBacking: tokenProbBacking,
-                    durationBacking: durationBacking
-                )
+                // INTENTIONAL: Reusing prepared decoder step (and boost vector
+                // from outer iteration — blanks don't change ySequence).
+                let innerDecision: TdtJointDecision
+                if boostingEnabled, let boostJointModel {
+                    innerDecision = try modelInference.runJointPreparedBoosted(
+                        encoderFrames: encoderFrames,
+                        timeIndex: safeTimeIndices,
+                        preparedDecoderStep: reusableDecoderStep,
+                        model: boostJointModel,
+                        encoderStep: reusableEncoderStep,
+                        encoderDestPtr: encDestPtr,
+                        encoderDestStride: encDestStride,
+                        inputProvider: jointInput,
+                        boostVector: boostVector
+                    )
+                } else {
+                    innerDecision = try modelInference.runJointPrepared(
+                        encoderFrames: encoderFrames,
+                        timeIndex: safeTimeIndices,
+                        preparedDecoderStep: reusableDecoderStep,
+                        model: jointModel,
+                        encoderStep: reusableEncoderStep,
+                        encoderDestPtr: encDestPtr,
+                        encoderDestStride: encDestStride,
+                        inputProvider: jointInput,
+                        tokenIdBacking: tokenIdBacking,
+                        tokenProbBacking: tokenProbBacking,
+                        durationBacking: durationBacking
+                    )
+                }
 
                 label = innerDecision.token
                 score = TdtDurationMapping.clampProbability(innerDecision.probability)
@@ -421,19 +473,35 @@ internal struct TdtDecoderV3: Sendable {
                     from: decoderResult.output, key: "decoder", errorMessage: "Invalid decoder output")
                 try modelInference.normalizeDecoderProjection(finalProjection, into: reusableDecoderStep)
 
-                let decision = try modelInference.runJointPrepared(
-                    encoderFrames: encoderFrames,
-                    timeIndex: frameIndex,
-                    preparedDecoderStep: reusableDecoderStep,
-                    model: jointModel,
-                    encoderStep: reusableEncoderStep,
-                    encoderDestPtr: encDestPtr,
-                    encoderDestStride: encDestStride,
-                    inputProvider: jointInput,
-                    tokenIdBacking: tokenIdBacking,
-                    tokenProbBacking: tokenProbBacking,
-                    durationBacking: durationBacking
-                )
+                let decision: TdtJointDecision
+                if boostingEnabled, let boostJointModel {
+                    let finalBoost = booster!.boostLogprobs(previousTokens: hypothesis.ySequence[...])
+                    decision = try modelInference.runJointPreparedBoosted(
+                        encoderFrames: encoderFrames,
+                        timeIndex: frameIndex,
+                        preparedDecoderStep: reusableDecoderStep,
+                        model: boostJointModel,
+                        encoderStep: reusableEncoderStep,
+                        encoderDestPtr: encDestPtr,
+                        encoderDestStride: encDestStride,
+                        inputProvider: jointInput,
+                        boostVector: finalBoost
+                    )
+                } else {
+                    decision = try modelInference.runJointPrepared(
+                        encoderFrames: encoderFrames,
+                        timeIndex: frameIndex,
+                        preparedDecoderStep: reusableDecoderStep,
+                        model: jointModel,
+                        encoderStep: reusableEncoderStep,
+                        encoderDestPtr: encDestPtr,
+                        encoderDestStride: encDestStride,
+                        inputProvider: jointInput,
+                        tokenIdBacking: tokenIdBacking,
+                        tokenProbBacking: tokenProbBacking,
+                        durationBacking: durationBacking
+                    )
+                }
 
                 let token = decision.token
                 let score = TdtDurationMapping.clampProbability(decision.probability)

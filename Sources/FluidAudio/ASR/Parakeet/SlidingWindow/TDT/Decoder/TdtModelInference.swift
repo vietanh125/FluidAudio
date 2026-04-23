@@ -134,6 +134,98 @@ internal struct TdtModelInference: Sendable {
         return TdtJointDecision(token: token, probability: probability, durationBin: durationBin)
     }
 
+    /// Execute the raw-logits single-step joint (`parakeet_joint_single_step.mlpackage`)
+    /// with host-side vocabulary biasing.
+    ///
+    /// Unlike `runJointPrepared`, which reads a pre-argmaxed scalar token from
+    /// the fused decision head, this variant returns raw `token_logits` and
+    /// `duration_logits`. Callers add a per-token boost vector to the token
+    /// logits before argmax — this is how trie-based context biasing is
+    /// realized on device.
+    ///
+    /// - Parameter boostVector: length = `token_logits.count` (8193 for v3).
+    ///   Values are added directly in log-prob space.
+    func runJointPreparedBoosted(
+        encoderFrames: EncoderFrameView,
+        timeIndex: Int,
+        preparedDecoderStep: MLMultiArray,
+        model: MLModel,
+        encoderStep: MLMultiArray,
+        encoderDestPtr: UnsafeMutablePointer<Float>,
+        encoderDestStride: Int,
+        inputProvider: MLFeatureProvider,
+        boostVector: [Float]
+    ) throws -> TdtJointDecision {
+
+        try encoderFrames.copyFrame(at: timeIndex, into: encoderDestPtr, destinationStride: encoderDestStride)
+        encoderStep.prefetchToNeuralEngine()
+        preparedDecoderStep.prefetchToNeuralEngine()
+
+        // No output backings — let CoreML allocate; tensors are large enough
+        // (token_logits [1,1,1,8193]) that reuse savings are marginal and
+        // reusing requires per-model shape validation we don't need here.
+        predictionOptions.outputBackings = [:]
+
+        let output = try model.prediction(from: inputProvider, options: predictionOptions)
+
+        let tokenLogits = try extractFeatureValue(
+            from: output, key: "token_logits", errorMessage: "joint_single_step missing token_logits")
+        let durationLogits = try extractFeatureValue(
+            from: output, key: "duration_logits", errorMessage: "joint_single_step missing duration_logits")
+
+        guard tokenLogits.dataType == .float32, durationLogits.dataType == .float32 else {
+            throw ASRError.processingFailed(
+                "joint_single_step logits must be float32; got token=\(tokenLogits.dataType) duration=\(durationLogits.dataType)"
+            )
+        }
+
+        let tokenCount = tokenLogits.count
+        let durCount = durationLogits.count
+        let tokenPtr = tokenLogits.dataPointer.bindMemory(to: Float.self, capacity: tokenCount)
+        let durPtr = durationLogits.dataPointer.bindMemory(to: Float.self, capacity: durCount)
+
+        // Apply boost vector (additive in log-prob space). vDSP handles the
+        // common case in one SIMD pass; if the vector is shorter than the
+        // logits we fall back to element-wise for the overlap.
+        let applyCount = min(boostVector.count, tokenCount)
+        if applyCount > 0 {
+            boostVector.withUnsafeBufferPointer { bufPtr in
+                vDSP_vadd(tokenPtr, 1, bufPtr.baseAddress!, 1, tokenPtr, 1, vDSP_Length(applyCount))
+            }
+        }
+
+        // Argmax over token logits — vDSP_maxvi returns (max, index).
+        var maxValue: Float = -.greatestFiniteMagnitude
+        var maxIndex: vDSP_Length = 0
+        vDSP_maxvi(tokenPtr, 1, &maxValue, &maxIndex, vDSP_Length(tokenCount))
+        let token = Int(maxIndex)
+
+        // Softmax probability for the chosen token: exp(l_max - logsumexp) =
+        // 1 / (sum exp(l_i - l_max)). Compute in a numerically stable way.
+        var negMax: Float = -maxValue
+        var shifted = [Float](repeating: 0, count: tokenCount)
+        shifted.withUnsafeMutableBufferPointer { dst in
+            vDSP_vsadd(tokenPtr, 1, &negMax, dst.baseAddress!, 1, vDSP_Length(tokenCount))
+        }
+        var shiftedCount = Int32(tokenCount)
+        shifted.withUnsafeMutableBufferPointer { buf in
+            vvexpf(buf.baseAddress!, buf.baseAddress!, &shiftedCount)
+        }
+        var sumExp: Float = 0
+        shifted.withUnsafeBufferPointer { src in
+            vDSP_sve(src.baseAddress!, 1, &sumExp, vDSP_Length(tokenCount))
+        }
+        let probability = sumExp > 0 ? 1.0 / sumExp : 0.0
+
+        // Duration argmax
+        var dMax: Float = -.greatestFiniteMagnitude
+        var dIdx: vDSP_Length = 0
+        vDSP_maxvi(durPtr, 1, &dMax, &dIdx, vDSP_Length(durCount))
+        let durationBin = Int(dIdx)
+
+        return TdtJointDecision(token: token, probability: probability, durationBin: durationBin)
+    }
+
     /// Normalize decoder projection into [1, hiddenSize, 1] layout via BLAS copy.
     ///
     /// CoreML decoder outputs can have varying layouts ([1, 1, 640] or [1, 640, 1]).

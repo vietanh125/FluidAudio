@@ -84,6 +84,12 @@ public enum Repo: String, CaseIterable, Sendable {
     /// Fully qualified HuggingFace repo path (owner/name)
     public var remotePath: String {
         switch self {
+        case .parakeet:
+            // Mediform fork: includes the raw-logits JointSingleStep.mlmodelc
+            // alongside the standard FluidInference bundle so host-side
+            // vocabulary biasing (see CustomVocabulary/Boosting) can swap
+            // the argmax-internal JointDecision model at decode time.
+            return "Mediform/parakeet-full-logits-coreml"
         case .parakeetCtc110m:
             return "FluidInference/parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
@@ -234,6 +240,12 @@ public enum ModelNames {
         public static let decoderFile = decoder + ".mlmodelc"
         public static let jointFile = joint + ".mlmodelc"
         public static let ctcHeadFile = ctcHead + ".mlmodelc"
+
+        /// Optional raw-logits single-step joint for host-side vocabulary
+        /// biasing (see CustomVocabulary/Boosting). Not part of requiredModels;
+        /// loaded opportunistically when present alongside the other TDT files.
+        public static let jointSingleStep = "JointSingleStep"
+        public static let jointSingleStepFile = jointSingleStep + ".mlmodelc"
 
         public static let requiredModels: Set<String> = [
             preprocessorFile,
