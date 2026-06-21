@@ -86,6 +86,10 @@ public struct AsrModels: Sendable {
     public let configuration: MLModelConfiguration
     public let vocabulary: [Int: String]
     public let version: AsrModelVersion
+    /// Directory the models were loaded from (contains `tokenizer.json`). Set by
+    /// `load(from:)`; nil for in-memory/test construction. Used to lazily load a
+    /// `BpeTokenizer` for per-call vocabulary boosting (`transcribe(_:_:boostTerms:)`).
+    public let modelDirectory: URL?
 
     private static let logger = AppLogger(category: "AsrModels")
 
@@ -98,7 +102,8 @@ public struct AsrModels: Sendable {
         jointSingleStep: MLModel? = nil,
         configuration: MLModelConfiguration,
         vocabulary: [Int: String],
-        version: AsrModelVersion
+        version: AsrModelVersion,
+        modelDirectory: URL? = nil
     ) {
         self.encoder = encoder
         self.preprocessor = preprocessor
@@ -109,6 +114,7 @@ public struct AsrModels: Sendable {
         self.configuration = configuration
         self.vocabulary = vocabulary
         self.version = version
+        self.modelDirectory = modelDirectory
     }
 
     /// Whether this model uses a separate preprocessor and encoder (true for 0.6B, false for 110m fused)
@@ -347,7 +353,8 @@ extension AsrModels {
             jointSingleStep: jointSingleStepModel,
             configuration: config,
             vocabulary: try loadVocabulary(from: directory, version: version),
-            version: version
+            version: version,
+            modelDirectory: directory
         )
         logger.info("Successfully loaded all ASR models with optimized compute units")
         return asrModels
