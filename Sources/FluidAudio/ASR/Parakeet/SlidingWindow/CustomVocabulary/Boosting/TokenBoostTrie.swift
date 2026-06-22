@@ -1,142 +1,188 @@
 import Foundation
 
-/// Token-level trie for Parakeet vocabulary biasing.
+/// Aho-Corasick boosting tree for Parakeet vocabulary biasing — a faithful port
+/// of NeMo's greedy `boosting_tree` (TurboBias, arXiv:2508.07014).
 ///
-/// Built once from a list of BPE token sequences. At decoding time, for each
-/// step the decoder queries `boostLogprobs(previousTokens:)` and the returned
-/// vector is added to token logits before argmax.
+/// Built once from a list of BPE token sequences. At each decode step the
+/// decoder queries `boostLogprobs(previousTokens:alpha:)`; the returned DENSE
+/// vector is added to the token logits before argmax.
 ///
-/// Uses a flat node array (`Node` values stored in `[Node]`) rather than a
-/// tree of reference nodes so the instance is naturally immutable and
-/// `Sendable` without `@unchecked`. Build cost is still O(Σ|term|), query
-/// cost is O(maxPrefixLen) per step.
+/// Each node carries a depth-scaled `tokenScore` and an accumulated `nodeScore`
+/// (root→node). Failure links (Aho-Corasick) let a broken partial match back
+/// off to the longest matching suffix. The per-step vector is
+/// `α · advance(state)`:
+///   - continuation token(s) → positive forward score `tokenScore(child)`;
+///   - every other non-blank token → negative **baseline** `= Σ backoff_w`
+///     (telescopes to `−nodeScore(state)`), which *retracts* the accumulated
+///     boost when the phrase doesn't continue;
+///   - other phrases' first-tokens → backoff + re-entry (often nets ~0).
+/// This negative-on-all-others baseline is the cancellation that lets the tree
+/// boost hard (high α) without flooding false inserts — the one thing the prior
+/// positive-only additive trie lacked.
+///
+/// Flat node array (`[Node]` values) → naturally immutable and `Sendable`.
+/// Build cost O(Σ|term|); per-step query O(maxDepth + |arcs on the fail chain|).
+///
+/// Verified token-for-token against `docs/asr-research/nemo-boosting-tree-golden.json`.
 public final class TokenBoostTrie: Sendable {
 
     /// Total distinct terms inserted.
     public let wordCount: Int
 
-    /// Number of distinct first tokens across all inserted terms.
-    /// Useful as a sanity check (should be < firstTokenCount upper bound of
-    /// vocab size; if nearly equal to vocab size the trie is too broad).
-    public var firstTokenCount: Int { firstTokens.count }
-
-    /// Token-logit vocabulary size of the target model (e.g. 8193 for
-    /// Parakeet v3: 8192 vocab + 1 blank). Boost vectors are sized to match.
+    /// Token-logit vocabulary size of the target model (e.g. 8193 for Parakeet
+    /// v3: 8192 BPE vocab + 1 blank). Boost vectors are sized to match; the
+    /// blank slot (assumed last, `vocabSize − 1` for v3) always stays 0 so the
+    /// negative baseline never suppresses blank.
     public let vocabSize: Int
 
     private let nodes: [Node]  // nodes[0] is root
-    private let firstTokens: Set<Int>
+    private let maxDepth: Int  // deepest node level → bounds the suffix re-walk
+    private let contextScore: Double
+    private let depthScaling: Double
 
     // MARK: - Build
 
-    public init(terms: [(tokens: [Int], word: String)], vocabSize: Int) {
+    public init(
+        terms: [(tokens: [Int], word: String)],
+        vocabSize: Int,
+        contextScore: Double = BoostConstants.contextScore,
+        depthScaling: Double = BoostConstants.depthScaling
+    ) {
         precondition(vocabSize > 0, "vocabSize must be positive")
+        self.vocabSize = vocabSize
+        self.contextScore = contextScore
+        self.depthScaling = depthScaling
 
-        var builder: [BuilderNode] = [BuilderNode()]
-        var first = Set<Int>()
+        var builder: [BuilderNode] = [BuilderNode()]  // root
         var count = 0
+        var deepest = 0
 
-        for (tokens, word) in terms {
+        for (tokens, _) in terms {
             guard !tokens.isEmpty else { continue }
             var idx = 0
-            for tok in tokens {
+            for (i, tok) in tokens.enumerated() {
+                let ts = i == 0 ? contextScore : contextScore * depthScaling + log(Double(i + 1))
                 if let next = builder[idx].children[tok] {
+                    // Shared prefix: token_score = max(contextScore, existing).
+                    builder[next].tokenScore = max(contextScore, builder[next].tokenScore)
                     idx = next
-                    continue
+                } else {
+                    let newIdx = builder.count
+                    var n = BuilderNode()
+                    n.tokenScore = ts
+                    n.nodeScore = builder[idx].nodeScore + ts
+                    n.level = builder[idx].level + 1
+                    builder.append(n)
+                    builder[idx].children[tok] = newIdx
+                    idx = newIdx
                 }
-                let newIdx = builder.count
-                builder.append(BuilderNode())
-                builder[idx].children[tok] = newIdx
-                idx = newIdx
             }
-            builder[idx].isTerminal = true
-            builder[idx].word = word
-            first.insert(tokens[0])
+            builder[idx].isEnd = true
+            deepest = max(deepest, builder[idx].level)
             count += 1
         }
 
-        self.nodes = builder.map { Node(children: $0.children, isTerminal: $0.isTerminal, word: $0.word) }
-        self.firstTokens = first
+        // Aho-Corasick failure links via BFS over the trie.
+        var queue: [Int] = []
+        for (_, c) in builder[0].children { builder[c].failIdx = 0; queue.append(c) }
+        var qi = 0
+        while qi < queue.count {
+            let u = queue[qi]; qi += 1
+            // Snapshot children to avoid mutating while iterating.
+            for (tok, child) in builder[u].children {
+                var f = builder[u].failIdx
+                while f != 0 && builder[f].children[tok] == nil { f = builder[f].failIdx }
+                if let fc = builder[f].children[tok], fc != child {
+                    builder[child].failIdx = fc
+                } else {
+                    builder[child].failIdx = 0
+                }
+                queue.append(child)
+            }
+        }
+
+        self.nodes = builder.map {
+            Node(children: $0.children, tokenScore: $0.tokenScore, nodeScore: $0.nodeScore,
+                 isEnd: $0.isEnd, failIdx: $0.failIdx)
+        }
+        self.maxDepth = max(deepest, 1)
         self.wordCount = count
-        self.vocabSize = vocabSize
     }
 
     // MARK: - Query
 
-    /// Produce an additive boost vector over the full token-logit vocabulary.
-    ///
-    /// Mirrors `CanaryBoostProcessor.getBoostLogprobs` semantics exactly so
-    /// the hyperparameters from the Python sweep transfer unchanged:
-    /// - Every token in `firstTokens` receives `baseBoost` unconditionally.
-    /// - For each lookback in 1…min(|previousTokens|, maxPrefixLen), walk the
-    ///   trie over the suffix. If the walk succeeds, award `sequenceBoost *
-    ///   (1 + lookback * 0.25)` to every continuation, taking the max when a
-    ///   token is eligible via multiple paths.
-    public func boostLogprobs(
-        previousTokens: ArraySlice<Int>,
-        baseBoost: Float = BoostConstants.defaultBaseBoost,
-        sequenceBoost: Float = BoostConstants.defaultSequenceBoost,
-        maxPrefixLen: Int = BoostConstants.defaultMaxPrefixLen
-    ) -> [Float] {
-        var boost = [Float](repeating: 0, count: vocabSize)
+    /// Aho-Corasick goto: next state after emitting `token` from `state`.
+    @inline(__always)
+    private func goto(_ state: Int, _ token: Int) -> Int {
+        var cur = state
+        while cur != 0 && nodes[cur].children[token] == nil { cur = nodes[cur].failIdx }
+        return nodes[cur].children[token] ?? 0
+    }
 
-        for tid in firstTokens where tid >= 0 && tid < vocabSize {
-            boost[tid] = baseBoost
+    /// Reconstruct the current automaton state from the emitted token history.
+    /// Only the last `maxDepth` tokens matter (the longest matchable suffix is
+    /// ≤ maxDepth), so the re-walk is O(maxDepth) per step, not O(history).
+    private func state(after previousTokens: ArraySlice<Int>) -> Int {
+        let tail = previousTokens.suffix(maxDepth)
+        var s = 0
+        for t in tail { s = goto(s, t) }
+        return s
+    }
+
+    /// Dense per-step boost vector `α · advance(state)` (size `vocabSize`).
+    /// The blank slot (last index, v3) is left at 0.
+    public func boostLogprobs(previousTokens: ArraySlice<Int>, alpha: Float) -> [Float] {
+        let s = state(after: previousTokens)
+
+        // advance(state): baseline (telescopes to −nodeScore) + per-token exceptions.
+        var exceptions: [Int: Double] = [:]
+        var processed = Set<Int>()
+        var acc = 0.0
+        var cur = s
+        while true {
+            for (tok, child) in nodes[cur].children where !processed.contains(tok) {
+                exceptions[tok] = acc + nodes[child].tokenScore
+                processed.insert(tok)
+            }
+            if cur == 0 { break }
+            acc += nodes[nodes[cur].failIdx].nodeScore - nodes[cur].nodeScore
+            cur = nodes[cur].failIdx
         }
+        let baseline = Float(alpha) * Float(acc)
 
-        guard !previousTokens.isEmpty, maxPrefixLen > 0 else { return boost }
-
-        let maxLookback = min(previousTokens.count, maxPrefixLen)
-        for lookback in 1...maxLookback {
-            // previousTokens is an ArraySlice, `.suffix` is O(1) and returns a slice.
-            let prefix = previousTokens.suffix(lookback)
-            var nodeIdx = 0
-            var matched = true
-            for tok in prefix {
-                guard let next = nodes[nodeIdx].children[tok] else {
-                    matched = false
-                    break
-                }
-                nodeIdx = next
-            }
-            guard matched else { continue }
-
-            let strength = sequenceBoost * (1.0 + Float(lookback) * 0.25)
-            for tid in nodes[nodeIdx].children.keys where tid >= 0 && tid < vocabSize {
-                if strength > boost[tid] {
-                    boost[tid] = strength
-                }
-            }
+        // Dense vector: baseline on all non-blank tokens, exceptions override,
+        // blank (last slot) stays 0.
+        let lastNonBlank = vocabSize - 1  // blank assumed last (v3: 8192)
+        var boost = [Float](repeating: baseline, count: vocabSize)
+        boost[lastNonBlank] = 0  // never push/suppress blank
+        let a = Float(alpha)
+        for (tok, score) in exceptions where tok >= 0 && tok < lastNonBlank {
+            boost[tok] = a * Float(score)
         }
         return boost
     }
 
     /// Convenience when the caller has `[Int]` rather than a slice.
-    public func boostLogprobs(
-        previousTokens: [Int],
-        baseBoost: Float = BoostConstants.defaultBaseBoost,
-        sequenceBoost: Float = BoostConstants.defaultSequenceBoost,
-        maxPrefixLen: Int = BoostConstants.defaultMaxPrefixLen
-    ) -> [Float] {
-        boostLogprobs(
-            previousTokens: previousTokens[...],
-            baseBoost: baseBoost,
-            sequenceBoost: sequenceBoost,
-            maxPrefixLen: maxPrefixLen
-        )
+    public func boostLogprobs(previousTokens: [Int], alpha: Float) -> [Float] {
+        boostLogprobs(previousTokens: previousTokens[...], alpha: alpha)
     }
 
     // MARK: - Private types
 
     private struct Node: Sendable {
         let children: [Int: Int]
-        let isTerminal: Bool
-        let word: String?
+        let tokenScore: Double
+        let nodeScore: Double
+        let isEnd: Bool
+        let failIdx: Int
     }
 
     private struct BuilderNode {
         var children: [Int: Int] = [:]
-        var isTerminal: Bool = false
-        var word: String? = nil
+        var tokenScore: Double = 0
+        var nodeScore: Double = 0
+        var isEnd: Bool = false
+        var failIdx: Int = 0
+        var level: Int = 0
     }
 }
