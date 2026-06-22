@@ -36,10 +36,6 @@ public actor AsrManager {
     /// unavailable. Set via `setBooster(_:)`.
     internal var parakeetBooster: ParakeetBooster?
 
-    /// BPE tokenizer, lazily loaded from `asrModels.modelDirectory` the first
-    /// time a per-call boost list is supplied. Cached for reuse across calls.
-    private var cachedBpeTokenizer: BpeTokenizer?
-
     /// Cached vocabulary loaded once during initialization
     internal var vocabulary: [Int: String] = [:]
     #if DEBUG
@@ -458,51 +454,34 @@ public actor AsrManager {
         }
     }
 
-    /// Transcribe with a per-call medical-term boost list.
+    /// Transcribe with a per-call vocabulary booster, scoped to THIS decode only.
     ///
-    /// The terms are tokenized with the model's BPE tokenizer (loaded lazily
-    /// from `asrModels.modelDirectory` and cached), built into a transient
-    /// `ParakeetBooster`, and applied to THIS decode only — the previously
-    /// installed booster, if any, is restored afterward. Enables host-side
-    /// iterative boosting (decode → retrieve relevant terms → re-decode with
-    /// those terms) without the caller pre-tokenizing or owning booster state.
+    /// The previously installed booster (if any, via `setBooster`) is restored
+    /// afterward. Lets a host run iterative decode → retrieve relevant terms →
+    /// re-decode with a transient booster without owning manager booster state.
+    /// Pass `nil` to decode unboosted. Like `setBooster`, the booster takes
+    /// effect only when `JointSingleStep.mlmodelc` is loaded (else inactive).
     ///
-    /// An empty `boostTerms`, a missing tokenizer/model directory, or a missing
-    /// `JointSingleStep.mlmodelc` all degrade gracefully to ordinary decoding.
+    /// The caller supplies a fully-built `ParakeetBooster` (e.g. via
+    /// `ParakeetBooster.fromTokenMap` over a pre-tokenized term subset) so this
+    /// method needs no runtime tokenizer — works on bundles that ship only an
+    /// id→token vocabulary (no `tokenizer.json`).
     ///
-    /// Concurrency: the booster is held on actor state for the span of the call,
-    /// so two `transcribe` calls overlapping on the SAME manager would race on
-    /// it. Drive one manager serially (the Scribion service does, via its FIFO
-    /// queue); fan-out callers should use separate managers / `makeWorkerClone()`.
+    /// Concurrency: the booster is held on actor state for the call's span, so
+    /// overlapping calls on the SAME manager would race; drive one serially
+    /// (fan-out callers should use separate managers / `makeWorkerClone()`).
     public func transcribe(
         _ audioSamples: [Float],
         decoderState: inout TdtDecoderState,
-        boostTerms: [String]
+        booster: ParakeetBooster?
     ) async throws -> ASRResult {
-        guard !boostTerms.isEmpty, let booster = makeDynamicBooster(terms: boostTerms) else {
+        guard let booster else {
             return try await transcribe(audioSamples, decoderState: &decoderState)
         }
         let previous = parakeetBooster
         parakeetBooster = booster
         defer { parakeetBooster = previous }
         return try await transcribe(audioSamples, decoderState: &decoderState)
-    }
-
-    /// Build a transient booster from raw term strings using the model's BPE
-    /// tokenizer (lazily loaded + cached). Returns nil when the model directory
-    /// or tokenizer is unavailable.
-    private func makeDynamicBooster(terms: [String]) -> ParakeetBooster? {
-        guard let directory = asrModels?.modelDirectory else { return nil }
-        if cachedBpeTokenizer == nil {
-            cachedBpeTokenizer = try? BpeTokenizer.load(from: directory)
-        }
-        guard let tokenizer = cachedBpeTokenizer, !vocabulary.isEmpty else { return nil }
-        // token_logits length = BPE vocab + 1 blank slot (e.g. v3: 8192 + 1).
-        return ParakeetBooster.build(
-            terms: terms,
-            tokenizer: tokenizer,
-            vocabSize: vocabulary.count + 1
-        )
     }
 
     nonisolated internal func normalizedTimingToken(_ token: String) -> String {
