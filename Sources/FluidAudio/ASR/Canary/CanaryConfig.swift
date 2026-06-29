@@ -32,43 +32,54 @@ public enum CanaryPrecision: String, Sendable, CaseIterable {
     /// Compute units per precision.
     ///
     /// `int8` only decodes correctly on CPU (the MPSGraph backend crashes on the
-    /// per-channel layout). `int4` is documented as ANE-runnable, but the
-    /// `EncoderInt4` weight layout hangs the ANE driver indefinitely on at least
-    /// some Apple Silicon configurations (observed on M1 Pro / 16 GB / macOS
-    /// 26.x): CPU loads in 0.2s, ANE never returns. CPU_AND_GPU is the safe
-    /// default — same ANE-bypass effect, still GPU-accelerated, loads in ~2s.
-    /// Set `SCRIBION_CANARY_INT4_ANE=1` to opt back into ANE on machines where
-    /// it works (M2/M3+).
+    /// per-channel layout). `int4` and `fp16` are documented as ANE-runnable,
+    /// but large encoder weight layouts hang the ANE driver indefinitely on at
+    /// least some Apple Silicon configurations (observed: M1 Pro / 16 GB /
+    /// macOS 26.x with both `EncoderInt4.mlmodelc` and the 30-s `Encoder.mlmodelc`).
+    /// CPU loads in <1s, ANE never returns. CPU_AND_GPU is the safe default —
+    /// same ANE-bypass effect, still GPU-accelerated, loads in ~2s. Opt back
+    /// into ANE on machines where it works (M2/M3+) via:
+    ///   SCRIBION_CANARY_INT4_ANE=1   for int4
+    ///   SCRIBION_CANARY_FP16_ANE=1   for fp16
     var computeUnits: MLComputeUnits {
+        func env(_ key: String) -> Bool {
+            let v = ProcessInfo.processInfo.environment[key]
+            return v == "1" || v == "true"
+        }
         switch self {
         case .int8: return .cpuOnly
-        case .int4:
-            let force = ProcessInfo.processInfo.environment["SCRIBION_CANARY_INT4_ANE"]
-            return (force == "1" || force == "true") ? .cpuAndNeuralEngine : .cpuAndGPU
-        case .fp16: return .cpuAndNeuralEngine
+        case .int4: return env("SCRIBION_CANARY_INT4_ANE") ? .cpuAndNeuralEngine : .cpuAndGPU
+        case .fp16: return env("SCRIBION_CANARY_FP16_ANE") ? .cpuAndNeuralEngine : .cpuAndGPU
         }
     }
 }
 
-/// Fixed-shape contract for the canary-1b-v2 CoreML pipeline (15 s window).
+/// Fixed-shape contract for the canary-1b-v2 CoreML pipeline (40 s window).
+///
+/// Per NVIDIA's Canary technical report (Sec 6.4.1), Canary is trained on
+/// 30–40 s utterances; the originally-published FluidInference 15 s variant
+/// truncates each window mid-utterance, causing premature EOS and content
+/// loss on long-form conversational audio. This re-converted variant ships a
+/// 40 s window (the upper end of Sec 6.4.1's range — fewer seams across a
+/// long-form clip than 30 s) with 1 s overlap.
+/// See `mobius/models/stt/canary-1b-v2/coreml/convert-coreml.py`.
 public enum CanaryConfig {
     public static let sampleRate = 16000
-    /// 15 s window — the preprocessor input is fixed at this sample count.
-    public static let maxSamples = 240_000
-    /// Overlap between adjacent windows when chunking audio longer than 15 s.
-    /// 3 s (~19 tokens) gives the seam LCS-merge enough shared context to align
-    /// reliably while wasting little recompute. Hop = maxSamples − this.
-    public static let chunkOverlapSeconds = 3.0
-    public static let chunkOverlapSamples = 48_000
+    /// 40 s window — preprocessor input is fixed at this sample count.
+    public static let maxSamples = 640_000
+    /// Overlap between adjacent windows when chunking audio longer than `maxSamples`.
+    /// 1 s — NVIDIA Canary tech report Sec 6.4.1. (MLX path uses the same value.)
+    public static let chunkOverlapSeconds = 1.0
+    public static let chunkOverlapSamples = 16_000
     public static let melDim = 128
-    public static let melFrames = 1501
+    /// 40 s × 16 kHz / hop 160 + 1 = 4001
+    public static let melFrames = 4001
     public static let encoderHidden = 1024
-    public static let encoderFrames = 188
-    /// Decoder is exported at a fixed `[1, maxDecoderSteps]`. 128 covers a 15 s
-    /// window (max observed ~108 tokens incl. prompt) and is ~1.5× faster than 256.
-    /// `CanaryManager` reads the real length from the loaded model, so this is just
-    /// the contract/fallback value.
-    public static let maxDecoderSteps = 128
+    /// FastConformer subsamples mel by 8 → ceil(4001 / 8) = 501
+    public static let encoderFrames = 501
+    /// 256 covers a 40 s utterance (Canary's training max). `CanaryManager` reads
+    /// the real length from the loaded model, so this is just the contract/fallback.
+    public static let maxDecoderSteps = 256
     public static let vocabSize = 16384
 
     // Special token ids (the model's real decoder ids — see vocab.json).
