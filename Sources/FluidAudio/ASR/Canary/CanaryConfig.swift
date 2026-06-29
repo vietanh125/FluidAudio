@@ -29,9 +29,24 @@ public enum CanaryPrecision: String, Sendable, CaseIterable {
         }
     }
 
-    /// int8 only decodes correctly on CPU; int4/fp16 run on the Neural Engine.
+    /// Compute units per precision.
+    ///
+    /// `int8` only decodes correctly on CPU (the MPSGraph backend crashes on the
+    /// per-channel layout). `int4` is documented as ANE-runnable, but the
+    /// `EncoderInt4` weight layout hangs the ANE driver indefinitely on at least
+    /// some Apple Silicon configurations (observed on M1 Pro / 16 GB / macOS
+    /// 26.x): CPU loads in 0.2s, ANE never returns. CPU_AND_GPU is the safe
+    /// default — same ANE-bypass effect, still GPU-accelerated, loads in ~2s.
+    /// Set `SCRIBION_CANARY_INT4_ANE=1` to opt back into ANE on machines where
+    /// it works (M2/M3+).
     var computeUnits: MLComputeUnits {
-        self == .int8 ? .cpuOnly : .cpuAndNeuralEngine
+        switch self {
+        case .int8: return .cpuOnly
+        case .int4:
+            let force = ProcessInfo.processInfo.environment["SCRIBION_CANARY_INT4_ANE"]
+            return (force == "1" || force == "true") ? .cpuAndNeuralEngine : .cpuAndGPU
+        case .fp16: return .cpuAndNeuralEngine
+        }
     }
 }
 
@@ -65,4 +80,21 @@ public enum CanaryConfig {
     /// ▁ <|startofcontext|> <|startoftranscript|> <|emo:undefined|> <|en|> <|en|>
     /// <|pnc|> <|noitn|> <|notimestamp|> <|nodiarize|>
     public static let promptEnTranscribePnc: [Int32] = [16053, 7, 4, 16, 64, 64, 5, 9, 11, 13]
+
+    /// canary2 prompt for German transcribe + punctuation/capitalization.
+    /// Source and target both <|de|> (id=78); otherwise identical to the English
+    /// prompt. Use when transcribing German audio; mixing source/target produces
+    /// translation, which is rarely what callers want.
+    public static let promptDeTranscribePnc: [Int32] = [16053, 7, 4, 16, 78, 78, 5, 9, 11, 13]
+
+    /// Build a transcribe-PnC prompt for the given ISO-639-1 language code.
+    /// Returns the English prompt for unrecognised codes (parity with how
+    /// `transcribe(audio:)` without a language hint behaves today).
+    public static func promptTranscribePnc(forLanguage language: String) -> [Int32] {
+        switch language.lowercased() {
+        case "de": return promptDeTranscribePnc
+        case "en": return promptEnTranscribePnc
+        default:   return promptEnTranscribePnc
+        }
+    }
 }
