@@ -299,23 +299,47 @@ extension AsrModels {
         // Load the joint model. For v3 this is JointDecisionv3.mlmodelc (with
         // top-K outputs); for v2 / 110m / tdtJa it is the version-specific
         // JointDecision.mlmodelc.
+        //
+        // Backward-compat: upstream v3 ships JointDecisionv3.mlmodelc (top-K
+        // outputs). Older / fine-tuned bundles (e.g. Mediform medical de-v9)
+        // ship the legacy JointDecision.mlmodelc without top-K. Fall back to it
+        // when the v3 joint is absent so existing bundles keep loading. Top-K
+        // extraction is gated by `needsTopK` (set only when `language:` is
+        // passed for script filtering), so the legacy joint works for every
+        // caller that doesn't request it — including the trie-boost path, which
+        // routes through JointSingleStep.mlmodelc regardless.
+        var effectiveJointFile = fileNames.joint
+        if version == .v3 {
+            let repoDir = repoPath(from: directory, version: version)
+            let v3Path = repoDir.appendingPathComponent(fileNames.joint)
+            let legacyPath = repoDir.appendingPathComponent(Names.jointFile)
+            if !FileManager.default.fileExists(atPath: v3Path.path),
+                FileManager.default.fileExists(atPath: legacyPath.path)
+            {
+                logger.info(
+                    "\(fileNames.joint) not found; falling back to legacy \(Names.jointFile) "
+                        + "(no top-K / language script filtering)")
+                effectiveJointFile = Names.jointFile
+            }
+        }
+
         let jointModels = try await DownloadUtils.loadModels(
             version.repo,
-            modelNames: [fileNames.joint],
+            modelNames: [effectiveJointFile],
             directory: parentDirectory,
             computeUnits: config.computeUnits,
             variant: downloadVariant,
             progressHandler: progressHandler
         )
 
-        guard let jointModel = jointModels[fileNames.joint] else {
+        guard let jointModel = jointModels[effectiveJointFile] else {
             let hint =
                 version == .v3
                 ? " (required for v3; delete the models directory to force a fresh download)"
                 : ""
-            throw AsrModelsError.loadingFailed("Failed to load joint model \(fileNames.joint)\(hint)")
+            throw AsrModelsError.loadingFailed("Failed to load joint model \(effectiveJointFile)\(hint)")
         }
-        logger.info("Loaded \(fileNames.joint)")
+        logger.info("Loaded \(effectiveJointFile)")
 
         // [Beta] Optionally load CTC head model for custom vocabulary.
         // Supports two paths:
