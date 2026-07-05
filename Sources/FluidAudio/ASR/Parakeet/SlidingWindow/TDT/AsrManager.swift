@@ -334,7 +334,9 @@ public actor AsrManager {
                 language: language,
                 vocabulary: vocabulary,
                 emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
-                initialTimeIndexOverride: initialTimeIndexOverride
+                initialTimeIndexOverride: initialTimeIndexOverride,
+                booster: parakeetBooster,
+                boostJointModel: models.jointSingleStep
             )
         case .tdtJa:
             // The Japanese model outputs Kanji / Hiragana / Katakana, none of
