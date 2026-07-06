@@ -1,20 +1,40 @@
 import Foundation
 
-/// Trie-based vocabulary booster for Parakeet TDT decoding.
+/// Vocabulary booster for Parakeet TDT decoding.
 ///
-/// Wraps a `TokenBoostTrie` together with boost hyperparameters so callers
-/// (ScribionCore, CLI, tests) can just pass around a single value rather
-/// than re-plumbing bb/sb/lb through every transcribe call.
+/// Wraps one of two scoring backends together with its hyperparameters so
+/// callers (ScribionCore, CLI, tests) can pass around a single value:
+///
+/// - `.heuristic` — the original `TokenBoostTrie` scheme: additive
+///   `baseBoost` for term-initial tokens, `sequenceBoost * (1 + 0.25·lookback)`
+///   for continuations, no score retraction.
+/// - `.phraseTree` — NeMo GPU-PB (`PhraseBoostingTree`): Aho-Corasick trie
+///   with depth-scaled arc scores and backoff retraction. Requires the
+///   decoder to preserve the blank/non-blank category from the unbiased
+///   argmax (NeMo two-stage selection), signalled via
+///   `preservesBlankCategory`.
 ///
 /// Construct once per app lifetime (or per vocabulary change); pass through
 /// to `AsrManager.transcribe(..., booster:)`. Thread-safe and `Sendable`:
 /// all stored state is immutable after init.
 public struct ParakeetBooster: Sendable {
 
-    public let trie: TokenBoostTrie
-    public let baseBoost: Float
-    public let sequenceBoost: Float
-    public let maxPrefixLen: Int
+    public enum Scoring: Sendable {
+        case heuristic(trie: TokenBoostTrie, baseBoost: Float, sequenceBoost: Float, maxPrefixLen: Int)
+        case phraseTree(PhraseBoostingTree)
+    }
+
+    public let scoring: Scoring
+
+    /// GPU-PB scoring assigns negative retraction scores to non-continuing
+    /// tokens, which must not tip the blank/non-blank decision: the decoder
+    /// runs NeMo's two-stage selection (unbiased argmax picks the category;
+    /// boost re-ranks non-blank tokens only). The heuristic scheme keeps the
+    /// original single-argmax behavior.
+    public var preservesBlankCategory: Bool {
+        if case .phraseTree = scoring { return true }
+        return false
+    }
 
     public init(
         trie: TokenBoostTrie,
@@ -22,13 +42,15 @@ public struct ParakeetBooster: Sendable {
         sequenceBoost: Float = BoostConstants.defaultSequenceBoost,
         maxPrefixLen: Int = BoostConstants.defaultMaxPrefixLen
     ) {
-        self.trie = trie
-        self.baseBoost = baseBoost
-        self.sequenceBoost = sequenceBoost
-        self.maxPrefixLen = maxPrefixLen
+        self.scoring = .heuristic(
+            trie: trie, baseBoost: baseBoost, sequenceBoost: sequenceBoost, maxPrefixLen: maxPrefixLen)
     }
 
-    /// Build a booster directly from a pre-tokenized `{word: [token_ids]}` map.
+    public init(phraseTree: PhraseBoostingTree) {
+        self.scoring = .phraseTree(phraseTree)
+    }
+
+    /// Build a heuristic booster directly from a pre-tokenized `{word: [token_ids]}` map.
     ///
     /// Lets callers ship the tokenization step offline (e.g. via
     /// `pymlx/tokenize_boost_words.py`) and load the result as a bundle
@@ -41,9 +63,7 @@ public struct ParakeetBooster: Sendable {
         sequenceBoost: Float = BoostConstants.defaultSequenceBoost,
         maxPrefixLen: Int = BoostConstants.defaultMaxPrefixLen
     ) -> ParakeetBooster {
-        let entries: [(tokens: [Int], word: String)] = map
-            .compactMap { key, value in value.isEmpty ? nil : (tokens: value, word: key) }
-        let trie = TokenBoostTrie(terms: entries, vocabSize: vocabSize)
+        let trie = TokenBoostTrie(terms: Self.entries(fromTokenMap: map), vocabSize: vocabSize)
         return ParakeetBooster(
             trie: trie,
             baseBoost: baseBoost,
@@ -52,7 +72,23 @@ public struct ParakeetBooster: Sendable {
         )
     }
 
-    /// Build a booster from raw term strings using a BPE tokenizer.
+    /// Build a GPU-PB (NeMo phrase-boosting tree) booster from a pre-tokenized
+    /// `{word: [token_ids]}` map.
+    public static func gpuPB(
+        tokenMap: [String: [Int]],
+        vocabSize: Int,
+        config: PhraseBoostingTreeConfig
+    ) -> ParakeetBooster {
+        let tree = PhraseBoostingTree(
+            terms: Self.entries(fromTokenMap: tokenMap), vocabSize: vocabSize, config: config)
+        return ParakeetBooster(phraseTree: tree)
+    }
+
+    private static func entries(fromTokenMap map: [String: [Int]]) -> [(tokens: [Int], word: String)] {
+        map.compactMap { key, value in value.isEmpty ? nil : (tokens: value, word: key) }
+    }
+
+    /// Build a heuristic booster from raw term strings using a BPE tokenizer.
     ///
     /// - Parameters:
     ///   - terms: vocabulary terms (one per line, whitespace trimmed).
@@ -99,14 +135,30 @@ public struct ParakeetBooster: Sendable {
     /// Hot-path query used by the TDT decoder at each joint step.
     @inline(__always)
     public func boostLogprobs(previousTokens: ArraySlice<Int>) -> [Float] {
-        trie.boostLogprobs(
-            previousTokens: previousTokens,
-            baseBoost: baseBoost,
-            sequenceBoost: sequenceBoost,
-            maxPrefixLen: maxPrefixLen
-        )
+        switch scoring {
+        case .heuristic(let trie, let baseBoost, let sequenceBoost, let maxPrefixLen):
+            return trie.boostLogprobs(
+                previousTokens: previousTokens,
+                baseBoost: baseBoost,
+                sequenceBoost: sequenceBoost,
+                maxPrefixLen: maxPrefixLen
+            )
+        case .phraseTree(let tree):
+            return tree.boostLogprobs(previousTokens: previousTokens)
+        }
     }
 
-    public var wordCount: Int { trie.wordCount }
-    public var vocabSize: Int { trie.vocabSize }
+    public var wordCount: Int {
+        switch scoring {
+        case .heuristic(let trie, _, _, _): return trie.wordCount
+        case .phraseTree(let tree): return tree.phraseCount
+        }
+    }
+
+    public var vocabSize: Int {
+        switch scoring {
+        case .heuristic(let trie, _, _, _): return trie.vocabSize
+        case .phraseTree(let tree): return tree.vocabSize
+        }
+    }
 }

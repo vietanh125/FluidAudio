@@ -237,6 +237,10 @@ internal struct TdtDecoderV3: Sendable {
         if booster != nil && boostJointModel == nil {
             logger.warning("Booster supplied without boost joint model — falling back to unbiased decoding")
         }
+        // GPU-PB scoring requires NeMo two-stage selection (unbiased argmax
+        // decides blank vs non-blank); the heuristic scheme keeps the
+        // original single-argmax behavior.
+        let preserveBlankCategory = booster?.preservesBlankCategory ?? false
         var boostVector: [Float] = []
 
         // ===== MAIN DECODING LOOP =====
@@ -292,7 +296,8 @@ internal struct TdtDecoderV3: Sendable {
                     encoderDestPtr: encDestPtr,
                     encoderDestStride: encDestStride,
                     inputProvider: jointInput,
-                    boostVector: boostVector
+                    boostVector: boostVector,
+                    preserveBlankCategory: preserveBlankCategory
                 )
             } else {
                 decision = try modelInference.runJointPrepared(
@@ -398,7 +403,8 @@ internal struct TdtDecoderV3: Sendable {
                         encoderDestPtr: encDestPtr,
                         encoderDestStride: encDestStride,
                         inputProvider: jointInput,
-                        boostVector: boostVector
+                        boostVector: boostVector,
+                        preserveBlankCategory: preserveBlankCategory
                     )
                 } else {
                     innerDecision = try modelInference.runJointPrepared(
@@ -576,7 +582,8 @@ internal struct TdtDecoderV3: Sendable {
                         encoderDestPtr: encDestPtr,
                         encoderDestStride: encDestStride,
                         inputProvider: jointInput,
-                        boostVector: finalBoost
+                        boostVector: finalBoost,
+                        preserveBlankCategory: preserveBlankCategory
                     )
                 } else {
                     decision = try modelInference.runJointPrepared(

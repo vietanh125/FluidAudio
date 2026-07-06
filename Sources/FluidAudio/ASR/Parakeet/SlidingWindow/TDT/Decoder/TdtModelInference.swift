@@ -184,6 +184,12 @@ internal struct TdtModelInference: Sendable {
     ///
     /// - Parameter boostVector: length = `token_logits.count` (8193 for v3).
     ///   Values are added directly in log-prob space.
+    /// - Parameter preserveBlankCategory: NeMo GPU-PB two-stage selection —
+    ///   the unbiased argmax decides blank vs non-blank (boost must not tip
+    ///   that decision, since GPU-PB assigns negative retraction scores to
+    ///   non-continuing tokens); the boost then re-ranks non-blank tokens
+    ///   only. Blank is the last token logit. `false` keeps the original
+    ///   single-argmax behavior of the heuristic booster.
     func runJointPreparedBoosted(
         encoderFrames: EncoderFrameView,
         timeIndex: Int,
@@ -193,7 +199,8 @@ internal struct TdtModelInference: Sendable {
         encoderDestPtr: UnsafeMutablePointer<Float>,
         encoderDestStride: Int,
         inputProvider: MLFeatureProvider,
-        boostVector: [Float]
+        boostVector: [Float],
+        preserveBlankCategory: Bool = false
     ) throws -> TdtJointDecision {
 
         try encoderFrames.copyFrame(at: timeIndex, into: encoderDestPtr, destinationStride: encoderDestStride)
@@ -223,38 +230,49 @@ internal struct TdtModelInference: Sendable {
         let tokenPtr = tokenLogits.dataPointer.bindMemory(to: Float.self, capacity: tokenCount)
         let durPtr = durationLogits.dataPointer.bindMemory(to: Float.self, capacity: durCount)
 
-        // Apply boost vector (additive in log-prob space). vDSP handles the
-        // common case in one SIMD pass; if the vector is shorter than the
-        // logits we fall back to element-wise for the overlap.
-        let applyCount = min(boostVector.count, tokenCount)
-        if applyCount > 0 {
-            boostVector.withUnsafeBufferPointer { bufPtr in
-                vDSP_vadd(tokenPtr, 1, bufPtr.baseAddress!, 1, tokenPtr, 1, vDSP_Length(applyCount))
+        let token: Int
+        let probability: Float
+        if preserveBlankCategory {
+            // Stage 1: unbiased argmax over all tokens decides the category.
+            var uMax: Float = -.greatestFiniteMagnitude
+            var uIdx: vDSP_Length = 0
+            vDSP_maxvi(tokenPtr, 1, &uMax, &uIdx, vDSP_Length(tokenCount))
+            let blankId = tokenCount - 1
+            if Int(uIdx) == blankId {
+                token = blankId
+                probability = Self.softmaxProbability(of: blankId, logits: tokenPtr, count: tokenCount)
+            } else {
+                // Stage 2: boost non-blank logits only, re-select among them.
+                let applyCount = min(boostVector.count, blankId)
+                if applyCount > 0 {
+                    boostVector.withUnsafeBufferPointer { bufPtr in
+                        vDSP_vadd(tokenPtr, 1, bufPtr.baseAddress!, 1, tokenPtr, 1, vDSP_Length(applyCount))
+                    }
+                }
+                var bMax: Float = -.greatestFiniteMagnitude
+                var bIdx: vDSP_Length = 0
+                vDSP_maxvi(tokenPtr, 1, &bMax, &bIdx, vDSP_Length(blankId))
+                token = Int(bIdx)
+                probability = Self.softmaxProbability(of: token, logits: tokenPtr, count: tokenCount)
             }
-        }
+        } else {
+            // Apply boost vector (additive in log-prob space). vDSP handles the
+            // common case in one SIMD pass; if the vector is shorter than the
+            // logits we fall back to element-wise for the overlap.
+            let applyCount = min(boostVector.count, tokenCount)
+            if applyCount > 0 {
+                boostVector.withUnsafeBufferPointer { bufPtr in
+                    vDSP_vadd(tokenPtr, 1, bufPtr.baseAddress!, 1, tokenPtr, 1, vDSP_Length(applyCount))
+                }
+            }
 
-        // Argmax over token logits — vDSP_maxvi returns (max, index).
-        var maxValue: Float = -.greatestFiniteMagnitude
-        var maxIndex: vDSP_Length = 0
-        vDSP_maxvi(tokenPtr, 1, &maxValue, &maxIndex, vDSP_Length(tokenCount))
-        let token = Int(maxIndex)
-
-        // Softmax probability for the chosen token: exp(l_max - logsumexp) =
-        // 1 / (sum exp(l_i - l_max)). Compute in a numerically stable way.
-        var negMax: Float = -maxValue
-        var shifted = [Float](repeating: 0, count: tokenCount)
-        shifted.withUnsafeMutableBufferPointer { dst in
-            vDSP_vsadd(tokenPtr, 1, &negMax, dst.baseAddress!, 1, vDSP_Length(tokenCount))
+            // Argmax over token logits — vDSP_maxvi returns (max, index).
+            var maxValue: Float = -.greatestFiniteMagnitude
+            var maxIndex: vDSP_Length = 0
+            vDSP_maxvi(tokenPtr, 1, &maxValue, &maxIndex, vDSP_Length(tokenCount))
+            token = Int(maxIndex)
+            probability = Self.softmaxProbability(of: token, logits: tokenPtr, count: tokenCount)
         }
-        var shiftedCount = Int32(tokenCount)
-        shifted.withUnsafeMutableBufferPointer { buf in
-            vvexpf(buf.baseAddress!, buf.baseAddress!, &shiftedCount)
-        }
-        var sumExp: Float = 0
-        shifted.withUnsafeBufferPointer { src in
-            vDSP_sve(src.baseAddress!, 1, &sumExp, vDSP_Length(tokenCount))
-        }
-        let probability = sumExp > 0 ? 1.0 / sumExp : 0.0
 
         // Duration argmax
         var dMax: Float = -.greatestFiniteMagnitude
@@ -263,6 +281,33 @@ internal struct TdtModelInference: Sendable {
         let durationBin = Int(dIdx)
 
         return TdtJointDecision(token: token, probability: probability, durationBin: durationBin)
+    }
+
+    /// Numerically stable softmax probability of `index` over `logits`.
+    /// Shifts by the true max (the chosen index need not be the max under
+    /// two-stage selection): p = exp(l_i - m) / Σ exp(l_j - m).
+    private static func softmaxProbability(
+        of index: Int, logits: UnsafeMutablePointer<Float>, count: Int
+    ) -> Float {
+        var maxValue: Float = -.greatestFiniteMagnitude
+        var maxIndex: vDSP_Length = 0
+        vDSP_maxvi(logits, 1, &maxValue, &maxIndex, vDSP_Length(count))
+
+        var negMax: Float = -maxValue
+        var shifted = [Float](repeating: 0, count: count)
+        shifted.withUnsafeMutableBufferPointer { dst in
+            vDSP_vsadd(logits, 1, &negMax, dst.baseAddress!, 1, vDSP_Length(count))
+        }
+        var shiftedCount = Int32(count)
+        shifted.withUnsafeMutableBufferPointer { buf in
+            vvexpf(buf.baseAddress!, buf.baseAddress!, &shiftedCount)
+        }
+        var sumExp: Float = 0
+        shifted.withUnsafeBufferPointer { src in
+            vDSP_sve(src.baseAddress!, 1, &sumExp, vDSP_Length(count))
+        }
+        guard sumExp > 0 else { return 0 }
+        return shifted[index] / sumExp
     }
 
     /// Normalize decoder projection into [1, hiddenSize, 1] layout via BLAS copy.
