@@ -4,12 +4,17 @@ import Foundation
 /// Only implements encoding - no decoding, chat templates, or other features.
 /// Supports the specific tokenizer.json format used by Parakeet models.
 ///
-/// Text normalization: Applies lowercasing + NFKC normalization before BPE encoding,
-/// matching the standard NeMo CTC tokenization pipeline.
+/// Text normalization: Applies NFKC normalization before BPE encoding, plus
+/// lowercasing when the loaded vocabulary is all-lowercase (matching the standard
+/// NeMo CTC pipeline for uncased models such as parakeet-ctc-110m). Vocabularies
+/// containing cased pieces (e.g. the German v3 SentencePiece-BPE vocab) are
+/// detected at load time and encoded case-preserving — lowercasing a cased vocab
+/// drops encode fidelity from 100% to ~45%.
 public final class BpeTokenizer: Sendable {
     private let vocab: [String: Int]
     private let merges: [(String, String)]
     private let addedTokens: [String: Int]
+    private let lowercasesInput: Bool
 
     public enum Error: Swift.Error, LocalizedError {
         case fileNotFound(URL)
@@ -84,17 +89,24 @@ public final class BpeTokenizer: Sendable {
             addedTokensDict[content] = id
         }
 
+        let hasCasedPiece = vocabDict.keys.contains { $0.contains(where: \.isUppercase) }
+
         return BpeTokenizer(
             vocab: vocabDict,
             merges: merges,
-            addedTokens: addedTokensDict
+            addedTokens: addedTokensDict,
+            lowercasesInput: !hasCasedPiece
         )
     }
 
-    private init(vocab: [String: Int], merges: [(String, String)], addedTokens: [String: Int]) {
+    private init(
+        vocab: [String: Int], merges: [(String, String)], addedTokens: [String: Int],
+        lowercasesInput: Bool
+    ) {
         self.vocab = vocab
         self.merges = merges
         self.addedTokens = addedTokens
+        self.lowercasesInput = lowercasesInput
     }
 
     /// Encode text to token IDs using BPE.
@@ -114,8 +126,8 @@ public final class BpeTokenizer: Sendable {
         addSpecialTokens: Bool = false,
         prependWordBoundary: Bool = true
     ) -> [Int] {
-        // Normalize: lowercase + NFKC normalization (matches NeMo CTC models)
-        let normalized = text.lowercased().precomposedStringWithCompatibilityMapping
+        // Normalize: NFKC, lowercasing only for uncased vocabularies (see class docs)
+        let normalized = (lowercasesInput ? text.lowercased() : text).precomposedStringWithCompatibilityMapping
 
         // Pre-tokenize: replace spaces with ▁ (sentencepiece style)
         let leading = prependWordBoundary ? ASRConstants.sentencePieceWordBoundary : ""
