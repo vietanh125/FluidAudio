@@ -240,7 +240,8 @@ extension AsrModels {
         encoderPrecision: ParakeetEncoderPrecision = .int8,
         encoderComputeUnits: MLComputeUnits? = nil,
         progressHandler: ProgressHandler? = nil,
-        loadBoostJoint: Bool = false
+        loadBoostJoint: Bool = false,
+        loadCtcHead: Bool = false
     ) async throws -> AsrModels {
         logger.info("Loading ASR models from: \(directory.path)")
 
@@ -256,7 +257,8 @@ extension AsrModels {
         if version == .v3,
             let legacy = try loadLocalLegacyBundleIfComplete(
                 directory: directory, config: config,
-                encoderComputeUnits: encoderComputeUnits, loadBoostJoint: loadBoostJoint
+                encoderComputeUnits: encoderComputeUnits, loadBoostJoint: loadBoostJoint,
+                loadCtcHead: loadCtcHead
             )
         {
             return legacy
@@ -365,8 +367,9 @@ extension AsrModels {
         // Shared-encoder CTC head: any bundle may ship `CtcHead.mlmodelc`
         // alongside the TDT files (encoder output -> CTC logits over the same
         // 80ms frame grid), enabling keyword spotting without a second
-        // encoder pass. Load it whenever it is present.
-        do {
+        // encoder pass. Opt-in via `loadCtcHead` so non-spotting callers
+        // don't carry the idle model in memory.
+        if loadCtcHead {
             let repoDir = repoPath(from: directory, version: version)
             let ctcHeadPath = repoDir.appendingPathComponent(Names.ctcHeadFile)
             if FileManager.default.fileExists(atPath: ctcHeadPath.path) {
@@ -461,7 +464,8 @@ extension AsrModels {
         directory: URL,
         config: MLModelConfiguration,
         encoderComputeUnits: MLComputeUnits?,
-        loadBoostJoint: Bool
+        loadBoostJoint: Bool,
+        loadCtcHead: Bool
     ) throws -> AsrModels? {
         let repoDir = repoPath(from: directory, version: .v3)
         guard isCompleteLegacyBundle(at: repoDir) else { return nil }
@@ -484,8 +488,9 @@ extension AsrModels {
         let joint = try loadLocalModel(Names.jointFile, units: config.computeUnits)
 
         var ctcHead: MLModel?
-        if FileManager.default.fileExists(
-            atPath: repoDir.appendingPathComponent(Names.ctcHeadFile).path)
+        if loadCtcHead,
+            FileManager.default.fileExists(
+                atPath: repoDir.appendingPathComponent(Names.ctcHeadFile).path)
         {
             ctcHead = try? loadLocalModel(Names.ctcHeadFile, units: config.computeUnits)
         }
