@@ -116,6 +116,8 @@ public enum Repo: String, CaseIterable, Sendable {
             return "silero-vad-coreml"
         case .parakeetV3:
             return "parakeet-tdt-0.6b-v3-coreml"
+        case .parakeetV3FullLogits:
+            return "parakeet-full-logits-coreml"
         case .parakeetV2:
             return "parakeet-tdt-0.6b-v2-coreml"
         case .parakeetCtc110m:
