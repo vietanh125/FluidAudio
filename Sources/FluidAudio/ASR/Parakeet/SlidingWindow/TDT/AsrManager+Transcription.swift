@@ -9,6 +9,8 @@ extension AsrManager {
         let minimumRequiredSamples = ASRConstants.minimumRequiredSamples(forSampleRate: config.sampleRate)
         guard audioSamples.count >= minimumRequiredSamples else { throw ASRError.invalidAudioData }
 
+        if ctcLogProbCapture { capturedCtcRows.removeAll() }
+
         let startTime = Date()
 
         // Route to appropriate processing method based on audio length
@@ -169,8 +171,30 @@ extension AsrManager {
             confidence: confidence,
             duration: duration,
             processingTime: processingTime,
-            tokenTimings: resultTimings
+            tokenTimings: resultTimings,
+            ctcLogProbs: drainCapturedCtcLogProbs()
         )
+    }
+
+    /// Assemble the CTC rows captured during this transcription into a dense
+    /// `[T, vocab]` matrix on the global 80ms frame grid and clear the
+    /// capture buffer. Overlapping window regions keep the latest window's
+    /// rows; any gap (which contiguous chunking should not produce) is
+    /// filled with a flat log(1/V) row so downstream DP stays well-defined.
+    private func drainCapturedCtcLogProbs() -> [[Float]]? {
+        guard ctcLogProbCapture, !capturedCtcRows.isEmpty else { return nil }
+        defer { capturedCtcRows.removeAll() }
+        guard let maxFrame = capturedCtcRows.keys.max(),
+            let vocabSize = capturedCtcRows.values.first?.count, vocabSize > 0
+        else { return nil }
+
+        let flat = [Float](repeating: -logf(Float(vocabSize)), count: vocabSize)
+        var rows = [[Float]]()
+        rows.reserveCapacity(maxFrame + 1)
+        for t in 0...maxFrame {
+            rows.append(capturedCtcRows[t] ?? flat)
+        }
+        return rows
     }
 
 }

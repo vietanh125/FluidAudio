@@ -59,6 +59,15 @@ extension AsrManager {
 
             let encoderSequenceLength = encoderLength[0].intValue
 
+            if ctcLogProbCapture, let ctcHead = asrModels?.ctcHead {
+                await captureCtcLogProbs(
+                    encoderOutput: rawEncoderOutput,
+                    encoderSequenceLength: encoderSequenceLength,
+                    globalFrameOffset: globalFrameOffset,
+                    ctcHead: ctcHead
+                )
+            }
+
             // Calculate actual audio frames if not provided using shared constants
             let actualFrames =
                 actualAudioFrames ?? ASRConstants.calculateEncoderFrames(from: originalLength ?? paddedAudio.count)
@@ -87,6 +96,60 @@ extension AsrManager {
                 await sharedMLArrayCache.returnArray(preprocessorAudioArray)
             }
             throw error
+        }
+    }
+
+    /// Run the shared-encoder CTC head on one window's encoder output and
+    /// record the log-softmaxed rows at their global frame positions.
+    /// Failures are logged and skipped: transcription must never fail
+    /// because the optional spotting side-channel did.
+    private func captureCtcLogProbs(
+        encoderOutput: MLMultiArray,
+        encoderSequenceLength: Int,
+        globalFrameOffset: Int,
+        ctcHead: MLModel
+    ) async {
+        do {
+            let provider = try MLDictionaryFeatureProvider(
+                dictionary: ["encoder": MLFeatureValue(multiArray: encoderOutput)])
+            let output = try await ctcHead.compatPrediction(from: provider, options: predictionOptions)
+            let raw = try extractFeatureValue(
+                from: output, key: "ctc_head_raw_output", errorMessage: "Invalid CTC head output")
+
+            guard raw.shape.count == 3, raw.dataType == .float32 else {
+                logger.warning("CTC head output has unexpected shape/dtype; skipping capture")
+                return
+            }
+            let frameCount = min(encoderSequenceLength, raw.shape[1].intValue)
+            let vocabSize = raw.shape[2].intValue
+            guard frameCount > 0, vocabSize > 1 else { return }
+
+            let frameStride = raw.strides[1].intValue
+            let vocabStride = raw.strides[2].intValue
+            let base = raw.dataPointer.assumingMemoryBound(to: Float.self)
+
+            var rawRows = [[Float]]()
+            rawRows.reserveCapacity(frameCount)
+            for t in 0..<frameCount {
+                var row = [Float](repeating: 0, count: vocabSize)
+                let framePtr = base + t * frameStride
+                if vocabStride == 1 {
+                    row.withUnsafeMutableBufferPointer { buf in
+                        buf.baseAddress!.update(from: framePtr, count: vocabSize)
+                    }
+                } else {
+                    for v in 0..<vocabSize { row[v] = framePtr[v * vocabStride] }
+                }
+                rawRows.append(row)
+            }
+
+            let logRows = CtcKeywordSpotter.applyLogSoftmax(
+                rawLogits: rawRows, blankId: vocabSize - 1)
+            for (i, row) in logRows.enumerated() {
+                capturedCtcRows[globalFrameOffset + i] = row
+            }
+        } catch {
+            logger.warning("CTC head capture failed: \(error.localizedDescription)")
         }
     }
 

@@ -146,6 +146,10 @@ extension CtcKeywordSpotter {
         let (audioInput, clampedCount) = try prepareAudioArray(audioSamples)
         let melInput = try makeAudioFeatureProvider(array: audioInput, length: clampedCount)
 
+        guard let models else {
+            throw ASRError.processingFailed(
+                "CtcKeywordSpotter has no sidecar CTC models (shared-encoder mode); use spotKeywordsFromLogProbs")
+        }
         let melModel = models.melSpectrogram
         let encoderModel = models.encoder
 
@@ -238,7 +242,10 @@ extension CtcKeywordSpotter {
 
         // Detect expected input rank from the MelSpectrogram model's 'audio' feature description.
         // Canary-1b-v2 expects rank 1 [samples], parakeet-ctc-0.6b expects rank 2 [1, samples].
-        let melModel = models.melSpectrogram
+        guard let melModel = models?.melSpectrogram else {
+            throw ASRError.processingFailed(
+                "CtcKeywordSpotter has no sidecar CTC models (shared-encoder mode); use spotKeywordsFromLogProbs")
+        }
         let audioDesc = melModel.modelDescription.inputDescriptionsByName["audio"]
         let expectedRank = audioDesc?.multiArrayConstraint?.shape.count ?? 1
 

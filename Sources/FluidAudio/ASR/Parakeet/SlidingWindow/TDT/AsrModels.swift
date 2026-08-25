@@ -346,8 +346,11 @@ extension AsrModels {
         //   v1: CtcHead.mlmodelc placed manually in the TDT model directory
         //   v2: Auto-download from FluidInference/parakeet-ctc-110m-coreml HF repo
         var ctcHeadModel: MLModel?
-        if version == .tdtCtc110m {
-            // v1: Check local TDT model directory first
+        // Shared-encoder CTC head: any bundle may ship `CtcHead.mlmodelc`
+        // alongside the TDT files (encoder output -> CTC logits over the same
+        // 80ms frame grid), enabling keyword spotting without a second
+        // encoder pass. Load it whenever it is present.
+        do {
             let repoDir = repoPath(from: directory, version: version)
             let ctcHeadPath = repoDir.appendingPathComponent(Names.ctcHeadFile)
             if FileManager.default.fileExists(atPath: ctcHeadPath.path) {
@@ -355,12 +358,13 @@ extension AsrModels {
                 ctcConfig.computeUnits = config.computeUnits
                 ctcHeadModel = try? MLModel(contentsOf: ctcHeadPath, configuration: ctcConfig)
                 if ctcHeadModel != nil {
-                    logger.info("[Beta] Loaded CTC head model from local directory")
+                    logger.info("Loaded CTC head model from local directory")
                 } else {
                     logger.warning("CTC head model found but failed to load: \(ctcHeadPath.path)")
                 }
             }
-
+        }
+        if version == .tdtCtc110m {
             // v2: Fall back to downloading from parakeet-ctc-110m HF repo
             if ctcHeadModel == nil {
                 do {

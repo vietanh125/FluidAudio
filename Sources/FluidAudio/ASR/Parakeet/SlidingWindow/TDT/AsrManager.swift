@@ -64,6 +64,23 @@ public actor AsrManager {
     /// unavailable. Set via `setBooster(_:)`.
     internal var parakeetBooster: ParakeetBooster?
 
+    /// Shared-encoder CTC capture: when enabled and the bundle ships
+    /// `CtcHead.mlmodelc`, every encoder window additionally runs the CTC
+    /// head and the per-frame log-probs are attached to the `ASRResult`
+    /// (`ctcLogProbs`) for keyword spotting — no second encoder pass.
+    internal var ctcLogProbCapture: Bool = false
+    internal var capturedCtcRows: [Int: [Float]] = [:]
+
+    /// Enable or disable shared-encoder CTC log-prob capture for subsequent
+    /// transcriptions. No effect (empty capture) if the loaded bundle has no
+    /// `CtcHead.mlmodelc`.
+    public func setCtcLogProbCapture(_ enabled: Bool) {
+        ctcLogProbCapture = enabled
+        capturedCtcRows.removeAll()
+    }
+
+    public var hasCtcHead: Bool { asrModels?.ctcHead != nil }
+
     /// Cached vocabulary loaded once during initialization
     internal var vocabulary: [Int: String] = [:]
     #if DEBUG

@@ -11,7 +11,9 @@ import Foundation
 public struct CtcKeywordSpotter: Sendable {
 
     let logger = AppLogger(category: "CtcKeywordSpotter")
-    let models: CtcModels
+    /// Sidecar CTC models (mel + encoder). `nil` in shared-encoder mode,
+    /// where log-probs arrive precomputed via `spotKeywordsFromLogProbs`.
+    let models: CtcModels?
     public let blankId: Int
 
     /// Computed property to avoid storing non-Sendable MLPredictionOptions.
@@ -93,6 +95,13 @@ public struct CtcKeywordSpotter: Sendable {
 
     public init(models: CtcModels, blankId: Int = ContextBiasingConstants.defaultBlankId) {
         self.models = models
+        self.blankId = blankId
+    }
+
+    /// Shared-encoder mode: no sidecar models; only the precomputed-log-prob
+    /// entry points (`spotKeywordsFromLogProbs`) are usable.
+    public init(blankId: Int) {
+        self.models = nil
         self.blankId = blankId
     }
 
