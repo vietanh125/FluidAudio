@@ -121,54 +121,13 @@ public struct CtcKeywordSpotter: Sendable {
         let frameDuration = ctcResult.frameDuration
         let totalFrames = ctcResult.totalFrames
 
-        var results: [KeywordDetection] = []
-
-        for term in customVocabulary.terms {
-            // Skip short terms to reduce false positives (per NeMo CTC-WS paper)
-            guard term.text.count >= customVocabulary.minTermLength else {
-                if debugMode {
-                    logger.debug(
-                        "  Skipping '\(term.text)': too short (\(term.text.count) < \(customVocabulary.minTermLength) chars)"
-                    )
-                }
-                continue
-            }
-
-            let ids = term.ctcTokenIds ?? term.tokenIds
-            guard let ids, !ids.isEmpty else { continue }
-
-            // Adjust threshold for multi-token phrases
-            let tokenCount = ids.count
-            let adjustedThreshold: Float =
-                minScore.map { base in
-                    let extraTokens = max(0, tokenCount - ContextBiasingConstants.baselineTokenCountForThreshold)
-                    return base - Float(extraTokens) * ContextBiasingConstants.thresholdRelaxationPerToken
-                } ?? ContextBiasingConstants.defaultMinSpotterScore
-
-            // Find ALL occurrences of this keyword (not just the best one)
-            let multipleDetections = ctcWordSpotMultiple(
-                logProbs: logProbs,
-                keywordTokens: ids,
-                minScore: adjustedThreshold,
-                mergeOverlap: true
-            )
-
-            for (score, start, end) in multipleDetections {
-                let startTime = TimeInterval(start) * frameDuration
-                let endTime = TimeInterval(end) * frameDuration
-
-                let detection = KeywordDetection(
-                    term: term,
-                    score: score,
-                    totalFrames: totalFrames,
-                    startFrame: start,
-                    endFrame: end,
-                    startTime: startTime,
-                    endTime: endTime
-                )
-                results.append(detection)
-            }
-        }
+        let results = detectKeywords(
+            in: logProbs,
+            customVocabulary: customVocabulary,
+            minScore: minScore,
+            frameDuration: frameDuration,
+            totalFrames: totalFrames
+        )
 
         return SpotKeywordsResult(
             detections: results,
@@ -199,9 +158,46 @@ public struct CtcKeywordSpotter: Sendable {
             return SpotKeywordsResult(detections: [], logProbs: [], frameDuration: 0, totalFrames: 0)
         }
 
-        var results: [KeywordDetection] = []
+        let results = detectKeywords(
+            in: logProbs,
+            customVocabulary: customVocabulary,
+            minScore: minScore,
+            frameDuration: frameDuration,
+            totalFrames: totalFrames
+        )
 
+        return SpotKeywordsResult(
+            detections: results,
+            logProbs: logProbs,
+            frameDuration: frameDuration,
+            totalFrames: totalFrames
+        )
+    }
+
+    // MARK: - Shared detection stage
+
+    /// Filter eligible vocabulary terms, then run the per-term CTC-WS DP
+    /// across CPU cores. Each term's DP is a pure function of the shared
+    /// read-only log-probs, so the loop parallelizes without changing
+    /// results; per-term detections are reassembled in vocabulary order to
+    /// keep the output deterministic.
+    private func detectKeywords(
+        in logProbs: [[Float]],
+        customVocabulary: CustomVocabularyContext,
+        minScore: Float?,
+        frameDuration: Double,
+        totalFrames: Int
+    ) -> [KeywordDetection] {
+        struct SpotJob {
+            let term: CustomVocabularyTerm
+            let ids: [Int]
+            let threshold: Float
+        }
+
+        var jobs: [SpotJob] = []
+        jobs.reserveCapacity(customVocabulary.terms.count)
         for term in customVocabulary.terms {
+            // Skip short terms to reduce false positives (per NeMo CTC-WS paper)
             guard term.text.count >= customVocabulary.minTermLength else {
                 if debugMode {
                     logger.debug(
@@ -214,43 +210,44 @@ public struct CtcKeywordSpotter: Sendable {
             let ids = term.ctcTokenIds ?? term.tokenIds
             guard let ids, !ids.isEmpty else { continue }
 
-            let tokenCount = ids.count
+            // Adjust threshold for multi-token phrases
             let adjustedThreshold: Float =
                 minScore.map { base in
-                    let extraTokens = max(0, tokenCount - ContextBiasingConstants.baselineTokenCountForThreshold)
+                    let extraTokens = max(0, ids.count - ContextBiasingConstants.baselineTokenCountForThreshold)
                     return base - Float(extraTokens) * ContextBiasingConstants.thresholdRelaxationPerToken
                 } ?? ContextBiasingConstants.defaultMinSpotterScore
 
-            let multipleDetections = ctcWordSpotMultiple(
-                logProbs: logProbs,
-                keywordTokens: ids,
-                minScore: adjustedThreshold,
-                mergeOverlap: true
-            )
+            jobs.append(SpotJob(term: term, ids: ids, threshold: adjustedThreshold))
+        }
+        guard !jobs.isEmpty else { return [] }
 
-            for (score, start, end) in multipleDetections {
-                let startTime = TimeInterval(start) * frameDuration
-                let endTime = TimeInterval(end) * frameDuration
-
-                let detection = KeywordDetection(
-                    term: term,
-                    score: score,
-                    totalFrames: totalFrames,
-                    startFrame: start,
-                    endFrame: end,
-                    startTime: startTime,
-                    endTime: endTime
+        var detectionsPerJob = [[KeywordDetection]](repeating: [], count: jobs.count)
+        detectionsPerJob.withUnsafeMutableBufferPointer { output in
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
+                let job = jobs[index]
+                // Find ALL occurrences of this keyword (not just the best one)
+                let multipleDetections = ctcWordSpotMultiple(
+                    logProbs: logProbs,
+                    keywordTokens: job.ids,
+                    minScore: job.threshold,
+                    mergeOverlap: true
                 )
-                results.append(detection)
+                guard !multipleDetections.isEmpty else { return }
+                output[index] = multipleDetections.map { score, start, end in
+                    KeywordDetection(
+                        term: job.term,
+                        score: score,
+                        totalFrames: totalFrames,
+                        startFrame: start,
+                        endFrame: end,
+                        startTime: TimeInterval(start) * frameDuration,
+                        endTime: TimeInterval(end) * frameDuration
+                    )
+                }
             }
         }
 
-        return SpotKeywordsResult(
-            detections: results,
-            logProbs: logProbs,
-            frameDuration: frameDuration,
-            totalFrames: totalFrames
-        )
+        return detectionsPerJob.flatMap { $0 }
     }
 
     // MARK: - Log-Probability Conversion
