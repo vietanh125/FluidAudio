@@ -15,11 +15,19 @@ extension AsrManager {
 
         // Route to appropriate processing method based on audio length
         if audioSamples.count <= ASRConstants.maxModelSamples {
-            let (alignedSamples, frameAlignedLength) = frameAlignedAudio(audioSamples)
-            let paddedAudio: [Float] = padAudioIfNeeded(alignedSamples, targetLength: ASRConstants.maxModelSamples)
+            // Pass the TRUE sample count as the preprocessor's audio_length —
+            // the contract reference bundles are validated against, and what
+            // NeMo does. The mel front-end normalizes per feature over that
+            // length, so inflating it to a frame-aligned padded length shifts
+            // every mel frame slightly, which can flip borderline duration
+            // bins / boundary tokens on tightly-calibrated fine-tunes. The
+            // chunked path (ChunkProcessor) already passes true lengths; the
+            // frame-aligned variant remains only in transcribeChunk (the
+            // sliding-window streaming path).
+            let paddedAudio: [Float] = padAudioIfNeeded(audioSamples, targetLength: ASRConstants.maxModelSamples)
             let (hypothesis, encoderSequenceLength) = try await executeMLInferenceWithTimings(
                 paddedAudio,
-                originalLength: frameAlignedLength,
+                originalLength: audioSamples.count,
                 actualAudioFrames: nil,  // Will be calculated from originalLength
                 decoderState: &decoderState,
                 isLastChunk: true,  // Single-chunk: always first and last
