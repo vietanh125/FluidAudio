@@ -246,6 +246,22 @@ extension AsrModels {
 
         let config = configuration ?? defaultConfiguration()
 
+        // Complete legacy-layout v3 bundles (Mediform fine-tunes: JointDecision
+        // instead of JointDecisionv3, plain Encoder.mlmodelc, everything local)
+        // load straight from disk. Routing them through ModelHub would sync
+        // upstream's v3 required-file set into the custom directory — pulling a
+        // STOCK JointDecisionv3 / parakeet_v3_vocab.json into a fine-tuned
+        // bundle silently mixes incompatible weights (e.g. a v13 encoder with
+        // the stock joint decodes garbage).
+        if version == .v3,
+            let legacy = try loadLocalLegacyBundleIfComplete(
+                directory: directory, config: config,
+                encoderComputeUnits: encoderComputeUnits, loadBoostJoint: loadBoostJoint
+            )
+        {
+            return legacy
+        }
+
         let parentDirectory = directory.deletingLastPathComponent()
         let downloadVariant: String? = (version == .v3) ? encoderPrecision.rawValue : nil
         let specs = createModelSpecs(
@@ -421,6 +437,84 @@ extension AsrModels {
         )
         logger.info("Successfully loaded all ASR models with optimized compute units")
         return asrModels
+    }
+
+    /// True iff `repoDir` is a complete legacy-layout v3 bundle: no
+    /// JointDecisionv3.mlmodelc, but every legacy TDT file present locally.
+    private static func isCompleteLegacyBundle(at repoDir: URL) -> Bool {
+        let fileManager = FileManager.default
+        let v3Joint = repoDir.appendingPathComponent(Names.jointV3File)
+        guard !fileManager.fileExists(atPath: v3Joint.path) else { return false }
+        let required = [
+            Names.preprocessorFile, Names.encoderFile, Names.decoderFile,
+            Names.jointFile, Names.vocabularyFile,
+        ]
+        return required.allSatisfy {
+            fileManager.fileExists(atPath: repoDir.appendingPathComponent($0).path)
+        }
+    }
+
+    /// Load a complete legacy-layout v3 bundle directly from disk, bypassing
+    /// the ModelHub required-file sync entirely. Returns nil when the layout
+    /// does not apply so `load` continues on the hub path.
+    private static func loadLocalLegacyBundleIfComplete(
+        directory: URL,
+        config: MLModelConfiguration,
+        encoderComputeUnits: MLComputeUnits?,
+        loadBoostJoint: Bool
+    ) throws -> AsrModels? {
+        let repoDir = repoPath(from: directory, version: .v3)
+        guard isCompleteLegacyBundle(at: repoDir) else { return nil }
+        logger.info("Legacy-layout v3 bundle at \(repoDir.path); loading directly (no hub sync)")
+
+        func loadLocalModel(_ name: String, units: MLComputeUnits) throws -> MLModel {
+            let modelConfig = MLModelConfiguration()
+            modelConfig.computeUnits = units
+            modelConfig.allowLowPrecisionAccumulationOnGPU = true
+            let model = try MLModel(
+                contentsOf: repoDir.appendingPathComponent(name), configuration: modelConfig)
+            logger.info("Loaded \(name) with compute units: \(Self.describeComputeUnits(units))")
+            return model
+        }
+
+        let preprocessor = try loadLocalModel(Names.preprocessorFile, units: .cpuOnly)
+        let encoder = try loadLocalModel(
+            Names.encoderFile, units: encoderComputeUnits ?? config.computeUnits)
+        let decoder = try loadLocalModel(Names.decoderFile, units: config.computeUnits)
+        let joint = try loadLocalModel(Names.jointFile, units: config.computeUnits)
+
+        var ctcHead: MLModel?
+        if FileManager.default.fileExists(
+            atPath: repoDir.appendingPathComponent(Names.ctcHeadFile).path)
+        {
+            ctcHead = try? loadLocalModel(Names.ctcHeadFile, units: config.computeUnits)
+        }
+
+        var jointSingleStep: MLModel?
+        if loadBoostJoint,
+            FileManager.default.fileExists(
+                atPath: repoDir.appendingPathComponent(Names.jointSingleStepFile).path)
+        {
+            jointSingleStep = try? loadLocalModel(
+                Names.jointSingleStepFile, units: config.computeUnits)
+            if jointSingleStep != nil {
+                logger.info("Loaded optional JointSingleStep for vocabulary biasing")
+            }
+        }
+
+        let vocabulary = try loadVocabulary(from: directory, version: .v3)
+        logger.info("Successfully loaded legacy-layout ASR bundle")
+        return AsrModels(
+            encoder: encoder,
+            preprocessor: preprocessor,
+            decoder: decoder,
+            joint: joint,
+            ctcHead: ctcHead,
+            jointSingleStep: jointSingleStep,
+            configuration: config,
+            vocabulary: vocabulary,
+            version: .v3
+        )
     }
 
     private static func loadVocabulary(from directory: URL, version: AsrModelVersion) throws -> [Int: String] {
